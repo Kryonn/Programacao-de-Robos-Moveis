@@ -20,7 +20,7 @@ def generate_launch_description():
     # ------------------------------------------------------
     # Caminhos de pacotes e arquivos
     # ------------------------------------------------------
-    pkg_share = FindPackageShare("prm").find("prm")
+    pkg_share = FindPackageShare("trabalho_1").find("trabalho_1")
 
     world_path = PathJoinSubstitution([
         pkg_share,
