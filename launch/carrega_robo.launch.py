@@ -18,7 +18,7 @@ def generate_launch_description():
     # Constrói o caminho absoluto para o arquivo `robot.urdf.xacro`,
     # localizado na pasta `description` do pacote `prm`.
     urdf_path = PathJoinSubstitution([
-        FindPackageShare("prm"),         # Diretório do pacote `prm`
+        FindPackageShare("trabalho_1"),         # Diretório do pacote `prm`
         "description",                   # Subpasta onde está o modelo
         "robot.urdf.xacro"               # Nome do arquivo Xacro
     ])
