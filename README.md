@@ -23,7 +23,7 @@ Acesse a pasta `src` do seu workspace ROS 2:
 
 ```bash
 cd ~/ros2_ws/src/
-git clone https://github.com/matheusbg8/prm.git
+git clone https://github.com/Kryonn/Programacao-de-Robos-Moveis trabalho1
 ````
 
 ### 2. Instalar dependências
