@@ -112,7 +112,7 @@ def generate_launch_description():
     # ------------------------------------------------------
     # Carrega o arquivo de configuração do RViz a partir do pacote `prm`.
     rviz_config_file = PathJoinSubstitution([
-        FindPackageShare("prm"),
+        FindPackageShare("trabalho_1"),
         "rviz",
         "rviz_config.rviz"
     ])
@@ -147,15 +147,25 @@ def generate_launch_description():
     # Ponte Gazebo <-> ROS 2 (ros_gz_bridge)
     # ------------------------------------------------------
     # Estabelece a comunicação entre os tópicos do Gazebo e os tipos de mensagem do ROS 2.
+    # Sintaxe do bridge: <topico no gazebo>@<tipo do gazebo>@<tipo do ros compativel>
     bridge = Node(
         package="ros_gz_bridge",
         executable="parameter_bridge",
         name="ros_gz_bridge_prm_robot",
         arguments=[
-            "/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan",
-            "/imu@sensor_msgs/msg/Imu[ignition.msgs.IMU",
-            "/robot_cam@sensor_msgs/msg/Image@ignition.msgs.Image",
-            "/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",
+            "/scan@sensor_msgs/msg/LaserScan@ignition.msgs.LaserScan",
+            "/imu@sensor_msgs/msg/Imu@ignition.msgs.IMU",
+            # Camera normal
+            # "/robot_cam@sensor_msgs/msg/Image@ignition.msgs.Image",
+            # "/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",
+            # Camera de segmentacao semantica
+            "/robot_cam/labels_map@sensor_msgs/msg/Image@ignition.msgs.Image",
+            "/robot_cam/colored_map@sensor_msgs/msg/Image@ignition.msgs.Image",
+            "/robot_cam/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",            
+            # Camera de detectao bounding box
+            # "/boxes_visible_2d_image@sensor_msgs/msg/Image@ignition.msgs.Image",
+            # "/camera_info@sensor_msgs/msg/CameraInfo@ignition.msgs.CameraInfo",
+            # Mensagem com anotacoes nao e suportado pelo ros_gz_bridge
             # Necessário para controladores como diff_drive_controller
             "/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock",
         ],

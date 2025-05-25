@@ -27,7 +27,7 @@ def generate_launch_description():
     # Caminho para o mundo a ser carregado
     # ------------------------------------------------------
     # Encontra o diretório de instalação do pacote 'prm'.
-    pkg_share = FindPackageShare("prm").find("prm")
+    pkg_share = FindPackageShare("trabalho_1").find("trabalho_1")
 
     # Nome do arquivo do mundo (SDF) a ser carregado
     world_file_name = 'arena.sdf'
@@ -38,6 +38,17 @@ def generate_launch_description():
         "world",
         world_file_name
     ])
+
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/sensors_demo.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/heightmap.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/fuel.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/actor_crowd.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/auv_controls.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/buoyancy.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/fuel_textured_mesh.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/visualize_lidar.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/segmentation_camera.sdf'
+#    world_path='/usr/share/ignition/ignition-gazebo6/worlds/boundingbox_camera.sdf'
 
     # ------------------------------------------------------
     # Inicialização do simulador Gazebo
@@ -60,6 +71,7 @@ def generate_launch_description():
         pkg_share,
         os.path.join(pkg_share, "models")
     ])
+#/usr/share/gazebo-11/models/
 
     gz_set_env = SetEnvironmentVariable(
         name="IGN_GAZEBO_RESOURCE_PATH",

@@ -34,12 +34,15 @@ data_files = [
     (f'share/{package_name}/description', glob('description/*.urdf.xacro')),
     (f'share/{package_name}/rviz', glob('rviz/*.rviz')),
     (f'share/{package_name}/config', glob('config/*.yaml')),
-    (f'share/{package_name}/world', glob('world/*.sdf')),
 ]
 
 # Adiciona todos os arquivos de modelos da pasta models/ recursivamente (se existir)
 if os.path.isdir('models'):
     data_files.extend(package_dir_tree('models', f'share/{package_name}/models'))
+
+# Adiciona todos os arquivos de modelos de mundo da pasta world/ recursivamente (se existir)
+if os.path.isdir('world'):
+    data_files.extend(package_dir_tree('world', f'share/{package_name}/world'))
 
 setup(
     name=package_name,
@@ -48,8 +51,8 @@ setup(
     data_files=data_files,
     install_requires=['setuptools'],
     zip_safe=True,
-    maintainer='theo',
-    maintainer_email='theomsantos@usp.br',
+    maintainer='Matheus Machado',
+    maintainer_email='matheus.m.santos@icmc.usp.br',
     description='Pacote da disciplina SSC0712: Programação de Robôs Móveis',
     license='Apache-2.0',
     tests_require=['pytest'],

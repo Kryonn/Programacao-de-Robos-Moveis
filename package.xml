@@ -4,8 +4,7 @@
   <name>trabalho_1</name>
   <version>0.0.0</version>
   <description>Pacote da disciplina SSC0712: Programação de Robôs Móveis</description>
-  <maintainer email="theomsantos@usp.br">theo</maintainer>
-
+  <maintainer email="matheus.m.santos@icmc.usp.br">machado</maintainer>
   <license>Apache-2.0</license>
 
   <test_depend>ament_copyright</test_depend>
@@ -16,12 +15,14 @@
   <exec_depend>rclpy</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>turtlesim</exec_depend>
-  <exec_depend>ros_gz_bridge</exec_depend>
   <exec_depend>ros2launch</exec_depend>
 
   <exec_depend>joint_state_publisher</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>ros2_control</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>gazebo_ros</exec_depend>
+  
   <exec_depend>ros2_controllers</exec_depend>
   <exec_depend>rviz2</exec_depend>
   <exec_depend>xacro</exec_depend>

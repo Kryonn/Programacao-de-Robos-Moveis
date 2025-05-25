@@ -2,21 +2,26 @@
 <?xml version="1.0" ?>
 
 <sdf version="1.8">
+
   <world name="collision_test">
+
     <physics name='1ms' type='ignored'>
       <max_step_size>0.001</max_step_size>
       <real_time_factor>1</real_time_factor>
       <real_time_update_rate>1000</real_time_update_rate>
     </physics>
+
     <plugin name='ignition::gazebo::systems::Physics' filename='ignition-gazebo-physics-system'/>
     <plugin name='ignition::gazebo::systems::UserCommands' filename='ignition-gazebo-user-commands-system'/>
     <plugin name='ignition::gazebo::systems::SceneBroadcaster' filename='ignition-gazebo-scene-broadcaster-system'/>
+    
     <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
       <render_engine>ogre2</render_engine>
     </plugin>
     
     <plugin filename="libignition-gazebo-contact-system.so" name="ignition::gazebo::systems::Contact">
     </plugin>
+
     <scene>
       <ambient>1.0 1.0 1.0</ambient>
       <background>0.8 0.8 0.8</background>
@@ -38,6 +43,7 @@
 
     <model name="ground_plane">
       <static>true</static>
+
       <link name="link">
         <collision name="collision">
           <geometry>
@@ -61,6 +67,11 @@
           </material>
         </visual>
       </link>
+
+      <!-- Defefinindo label do chao como 10 -->    
+      <plugin name="ignition::gazebo::systems::Label" filename="ignition-gazebo-label-system">
+        <label>10</label>
+      </plugin>
     </model>
 
     <!-- A camera sensor that looks straight down on the map. -->
@@ -89,67 +100,90 @@
     </model>
 
     <include>
-        <uri>TurtlebotArena</uri>
-        <pose>0.0 0.0 0.0 0 0 0</pose>
+      <uri>TurtlebotArena</uri>
+      <pose>0.0 0.0 0.0 0 0 0</pose>
+
+      <!-- Defefinindo label das paredes da arena como 20 -->    
+      <plugin name="ignition::gazebo::systems::Label" filename="ignition-gazebo-label-system">
+        <label>20</label>
+      </plugin>
+
     </include>
 
-  <model name="flag">
-    <static>false</static>
+    <include>
+      <uri>ObstaculosArenaV1</uri>
+      <pose>0.0 0.0 0.0 0 0 0</pose>
 
-    <link name="flag_link">
-      <!-- Posição da base do objeto no mundo -->
-      <pose>1.8 0 0.2 0 0 0</pose>
+      <!-- Defefinindo label de obstaculos como 30 -->    
+      <plugin name="ignition::gazebo::systems::Label" filename="ignition-gazebo-label-system">
+        <label>30</label>
+      </plugin>
 
-      <!-- Mastro (cilindro) -->
-      <visual name="pole_visual">
-        <pose>0 0 0.2 0 0 0</pose>
-        <geometry>
-          <cylinder>
-            <radius>0.015</radius>
-            <length>0.4</length>
-          </cylinder>
-        </geometry>
-        <material>
-          <ambient>0.2 0.2 0.2 1</ambient>
-          <diffuse>0.3 0.3 0.3 1</diffuse>
-        </material>
-      </visual>
+    </include>
 
-      <!-- Bandeira (retângulo fino) -->
-      <visual name="flag_panel_visual">
-        <pose>0.16 0 0.38 0 0 0</pose>
-        <geometry>
-          <box>
-            <size>0.3 0.01 0.2</size>
-          </box>
-        </geometry>
-        <material>
-          <ambient>0.8 0 0 1</ambient>
-          <diffuse>1 0 0 1</diffuse>
-        </material>
-      </visual>
+    <model name="flag">
+      <static>false</static>
 
-      <!-- Colisão geral como uma caixa envolvendo tudo -->
-      <collision name="flag_collision">
-        <pose>0.08 0 0.2 0 0 0</pose>
-        <geometry>
-          <box>
-            <size>0.35 0.02 0.4</size>
-          </box>
-        </geometry>
-      </collision>
+      <link name="flag_link">
+        <!-- Posição da base do objeto no mundo -->
+        <pose>1.8 0 0.2 0 0 0</pose>
 
-      <!-- Inércia aproximada -->
-      <inertial>
-        <mass>0.1</mass>
-        <inertia>
-          <ixx>0.001</ixx>
-          <iyy>0.001</iyy>
-          <izz>0.001</izz>
-        </inertia>
-      </inertial>
-    </link>
-  </model>
+        <!-- Mastro (cilindro) -->
+        <visual name="pole_visual">
+          <pose>0 0 0.2 0 0 0</pose>
+          <geometry>
+            <cylinder>
+              <radius>0.015</radius>
+              <length>0.4</length>
+            </cylinder>
+          </geometry>
+          <material>
+            <ambient>0.2 0.2 0.2 1</ambient>
+            <diffuse>0.3 0.3 0.3 1</diffuse>
+          </material>
+        </visual>
+
+        <!-- Bandeira (retângulo fino) -->
+        <visual name="flag_panel_visual">
+          <pose>0.16 0 0.38 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>0.3 0.01 0.2</size>
+            </box>
+          </geometry>
+          <material>
+            <ambient>0.8 0 0 1</ambient>
+            <diffuse>1 0 0 1</diffuse>
+          </material>
+        </visual>
+
+        <!-- Colisão geral como uma caixa envolvendo tudo -->
+        <collision name="flag_collision">
+          <pose>0.08 0 0.2 0 0 0</pose>
+          <geometry>
+            <box>
+              <size>0.35 0.02 0.4</size>
+            </box>
+          </geometry>
+        </collision>
+
+        <!-- Inércia aproximada -->
+        <inertial>
+          <mass>0.1</mass>
+          <inertia>
+            <ixx>0.001</ixx>
+            <iyy>0.001</iyy>
+            <izz>0.001</izz>
+          </inertia>
+        </inertial>      
+      </link>
+
+      <!-- Defefinindo label da flag como 40 -->
+      <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+        <label>40</label>
+      </plugin>
+
+    </model>
 
   </world>
 </sdf>
