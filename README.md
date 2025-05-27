@@ -37,6 +37,15 @@ rosdep install --from-paths src --ignore-src -r -y
 
 > Certifique-se de ter rodado previamente `sudo rosdep init` e `rosdep update`, se for a primeira vez usando o `rosdep`.
 
+Se der erro, rode os seguintes comandos:
+```
+sudo apt update
+sudo apt install curl gnupg lsb-release
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
+sudo sh -c 'echo "deb http://packages.ros.org/ros2/ubuntu $(lsb_release -cs) main" > /etc/apt/sources.list.d/ros2-latest.list'
+sudo apt update
+```
+
 ### 3. Compilar o workspace
 
 Certifique-se de estar na **raiz do seu workspace** (geralmente `~/ros2_ws`) antes de compilar:
