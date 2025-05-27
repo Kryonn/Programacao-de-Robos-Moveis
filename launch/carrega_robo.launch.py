@@ -168,6 +168,7 @@ def generate_launch_description():
             # Mensagem com anotacoes nao e suportado pelo ros_gz_bridge
             # Necessário para controladores como diff_drive_controller
             "/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock",
+            "/model/prm_robot/pose@geometry_msgs/msg/Pose[ignition.msgs.Pose",
         ],
         output="screen",
     )
