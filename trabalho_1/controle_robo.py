@@ -11,7 +11,8 @@ from cv_bridge import CvBridge
 
 from sensor_msgs.msg import LaserScan, Imu, Image
 from nav_msgs.msg import Odometry
-from geometry_msgs.msg import Twist
+from geometry_msgs.msg import Twist, Pose
+from tf_transformations import euler_from_quaternion
 
 
 class ControleRobo(Node):
@@ -27,6 +28,7 @@ class ControleRobo(Node):
         self.create_subscription(Imu, '/imu', self.imu_callback, 10)
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(Image, '/robot_cam/colored_map', self.camera_callback, 10)
+        self.create_subscription(Pose, '/model/prm_robot/pose', self.pose_callback, 10)
 
         # Timer para enviar comandos continuamente
         self.timer = self.create_timer(0.1, self.move_robot)
@@ -46,8 +48,73 @@ class ControleRobo(Node):
         self.giro = False                   # Condição de início do giro 
         self.bandeira_identificada = False  # Condição de busca da bandeira
         self.obstaculo_a_frente = False     # Condição de giro
+        
+        self.map_size = 100  # Ex: 200x200 células
+        self.resolution = 0.1  # Cada célula = 10 cm
+        self.grid_map = np.zeros((self.map_size, self.map_size))
 
+        self.robot_x = 0.0
+        self.robot_y = 0.0
+        self.robot_yaw = 0.0
+
+    def is_in_map(self, grid_x, grid_y):
+        return 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size
+
+
+    # verifica distancia dos obstaculos
     def scan_callback(self, msg: LaserScan):
+        num_ranges = len(msg.ranges)
+        if num_ranges == 0:
+            return
+
+        # Para checar obstáculo à frente:
+        indices_frente = list(range(330, 360)) + list(range(0, 31))
+        distancias = [msg.ranges[i] for i in indices_frente if not np.isnan(msg.ranges[i])]
+
+        if distancias and min(distancias) < 0.5:
+            indice = distancias.index(min(distancias))
+            self.dir = "Direita" if indice <= 30 else "Esquerda"
+            self.obstaculo_a_frente = True
+            self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(min(distancias)))
+        else:
+            self.obstaculo_a_frente = False
+
+        #  mapeando obstáculos no grid
+        angle = msg.angle_min
+        for i, dist in enumerate(msg.ranges):
+            if np.isnan(dist) or dist == float('inf'):
+                angle += msg.angle_increment
+                continue
+
+            # Coordenadas relativas ao robô
+            obs_x = dist * np.cos(angle)
+            obs_y = dist * np.sin(angle)
+
+            # Coordenadas absolutas no mundo
+            world_x = self.robot_x + obs_x * np.cos(self.robot_yaw) - obs_y * np.sin(self.robot_yaw)
+            world_y = self.robot_y + obs_x * np.sin(self.robot_yaw) + obs_y * np.cos(self.robot_yaw)
+
+            # Convertendo para grid
+            grid_x, grid_y = self.world_to_grid(world_x, world_y)
+
+            if self.is_in_map(grid_x, grid_y):
+                self.grid_map[grid_y, grid_x] = 1.0  # 1.0 = obstáculo
+
+            angle += msg.angle_increment
+        self.show_grid()
+
+    def show_grid(self):
+        # Escala o grid de 0.0~1.0 para 0~255
+        grid_img = (self.grid_map * 255).astype(np.uint8)
+
+        # (Opcional) Redimensiona para visualizar melhor
+        grid_img = cv2.resize(grid_img, (800, 800), interpolation=cv2.INTER_NEAREST)
+
+        cv2.imshow('Mapa do Grid', grid_img)
+        cv2.waitKey(1)
+
+    # Função original, só detecta frente do robo
+    def scan_callback0(self, msg: LaserScan):
         # Verifica uma faixa estreita ao redor de 0° (frente)
         num_ranges = len(msg.ranges)
         if num_ranges == 0:
@@ -187,8 +254,40 @@ class ControleRobo(Node):
 
         self.cmd_vel_pub.publish(twist)
 
+    def world_to_grid(self, x, y):
+        map_center = self.map_size // 2
+        grid_x = int(map_center + (x / self.resolution))
+        grid_y = int(map_center + (y / self.resolution))
+        return grid_x, grid_y
 
 
+    def pose_callback(self, msg: Pose):
+        pos = msg.position
+        ori = msg.orientation
+
+        self.robot_x = pos.x
+        self.robot_y = pos.y
+
+          # Converte orientação quaternion → yaw
+        q = (ori.x, ori.y, ori.z, ori.w)
+        _, _, self.robot_yaw = euler_from_quaternion(q)
+
+        # Converte posição do mundo → grid
+        grid_x, grid_y = self.world_to_grid(self.robot_x, self.robot_y)
+
+        # Marca a célula do robô no grid
+        if self.is_in_map(grid_x, grid_y):
+            self.grid_map[grid_y, grid_x] = 0.5  # 0.5 = posição atual do robô
+
+
+        # Log informativo
+        self.get_logger().info(
+            f'Pose recebida -> Posição: x={pos.x:.2f}, y={pos.y:.2f}, z={pos.z:.2f}, '
+            f'Orientação (quaternion): x={ori.x:.2f}, y={ori.y:.2f}, z={ori.z:.2f}, w={ori.w:.2f}, '
+            f'Yaw: {np.degrees(self.robot_yaw):.2f}°'
+        )
+
+        self.show_grid()
 
 def main(args=None):
     rclpy.init(args=args)
