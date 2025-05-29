@@ -152,8 +152,6 @@ class ControleRobo(Node):
         pass
 
     def camera_callback(self, msg: Image):
-        if self.bandeira_mapeada:
-            return
         # Converte mensagem ROS para imagem OpenCV (BGR)
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
@@ -189,7 +187,7 @@ class ControleRobo(Node):
                     self.bandeira_identificada = True   # Atualizando a flag
 
                      # Quando a bandeira estiver centralizada
-                    if abs(self.error) < 10:  # Limiar ajustável (em pixels)
+                    if abs(self.error) < 5:  # Limiar ajustável (em pixels)
                         if self.ultima_scan is not None:
                             # Pega a distância à frente (ângulo 0°)
                             num_ranges = len(self.ultima_scan.ranges)
