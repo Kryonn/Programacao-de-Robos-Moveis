@@ -56,6 +56,12 @@ class ControleRobo(Node):
         self.robot_x = 0.0
         self.robot_y = 0.0
         self.robot_yaw = 0.0
+        self.pos_inicial_salva = False
+        self.robot_init_x = 0.0
+        self.robot_init_y = 0.0
+        self.ultima_scan = None
+        self.bandeira_mapeada = False
+        self.odom_received = False
 
     def is_in_map(self, grid_x, grid_y):
         return 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size
@@ -63,6 +69,9 @@ class ControleRobo(Node):
 
     # verifica distancia dos obstaculos
     def scan_callback(self, msg: LaserScan):
+        if not self.odom_received:
+        # Ignora scans até receber odometria
+            return
         num_ranges = len(msg.ranges)
         if num_ranges == 0:
             return
@@ -101,53 +110,39 @@ class ControleRobo(Node):
                 self.grid_map[grid_y, grid_x] = 1.0  # 1.0 = obstáculo
 
             angle += msg.angle_increment
-        self.show_grid()
+        self.ultima_scan = msg
+
 
     def show_grid(self):
-        # Escala o grid de 0.0~1.0 para 0~255
-        grid_img = (self.grid_map * 255).astype(np.uint8)
+        # Cria uma imagem colorida (map_size x map_size x 3)
+        grid_img = np.zeros((self.map_size, self.map_size, 3), dtype=np.uint8)
 
-        # (Opcional) Redimensiona para visualizar melhor
+        # Itera sobre todas as células
+        for y in range(self.map_size):
+            for x in range(self.map_size):
+                val = self.grid_map[y, x]
+                if val == 0.0:
+                    color = (0, 0, 0)  # Preto - livre
+                elif val == 1.0:
+                    color = (255, 255, 255)  # Branco - obstáculo
+                elif val == 0.5:
+                    color = (128, 128, 128)  # Cinza - posição atual
+                elif val == 0.75:
+                    color = (0, 255, 0)  # Verde - bandeira
+                elif val == 0.9:
+                    color = (255, 0, 0)  # Azul - posição inicial
+                else:
+                    color = (50, 50, 50)  # Default (livre escuro)
+
+                grid_img[y, x] = color
+
+        # Redimensiona para visualizar melhor
         grid_img = cv2.resize(grid_img, (800, 800), interpolation=cv2.INTER_NEAREST)
 
-        cv2.imshow('Mapa do Grid', grid_img)
+        cv2.imshow('Mapa Colorido do Grid', grid_img)
         cv2.waitKey(1)
 
-    # Função original, só detecta frente do robo
-    def scan_callback0(self, msg: LaserScan):
-        # Verifica uma faixa estreita ao redor de 0° (frente)
-        num_ranges = len(msg.ranges)
-        if num_ranges == 0:
-            return
-
-        # Índices de -30° a +30° (equivalente a 330 até 30)
-        indices_frente = list(range(330, 360)) + list(range(0, 31))
-
-        # Filtra distancias
-        distancias = [msg.ranges[i] for i in indices_frente]
-
-        if distancias and min(distancias) < 0.5:
-            # Determinando o índice da distância mínima
-            indice = distancias.index(min(distancias))
-
-            # Se o índice for menor que 30, então o obstáculo está a esquerda e,
-            # por conta disso, é necessário virar o robô para a direita. Senão,
-            # a direção de giro do robô é a esquerda.
-            if indice <= 30:
-                self.dir = "Direita"
-            else:
-                self.dir = "Esquerda"
-
-            # Atualizando a flag
-            self.obstaculo_a_frente = True
-
-            # Printando a distância
-            self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(min(distancias)))
-        else:
-
-            # Atualizando a flag
-            self.obstaculo_a_frente = False
-
+    
     def imu_callback(self, msg: Imu):
         # Mensagens da IMU!
         pass
@@ -157,6 +152,8 @@ class ControleRobo(Node):
         pass
 
     def camera_callback(self, msg: Image):
+        if self.bandeira_mapeada:
+            return
         # Converte mensagem ROS para imagem OpenCV (BGR)
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
 
@@ -191,6 +188,33 @@ class ControleRobo(Node):
                     self.error = cx - width / 2         # Cálculo do erro do giro
                     self.bandeira_identificada = True   # Atualizando a flag
 
+                     # Quando a bandeira estiver centralizada
+                    if abs(self.error) < 10:  # Limiar ajustável (em pixels)
+                        if self.ultima_scan is not None:
+                            # Pega a distância à frente (ângulo 0°)
+                            num_ranges = len(self.ultima_scan.ranges)
+                            indice_frente = num_ranges // 2  # Assume 0° bem no centro
+                            distancia = self.ultima_scan.ranges[indice_frente]
+
+                            if not np.isnan(distancia) and distancia != float('inf'):
+                                # Calcula a posição global da bandeira
+                                bandeira_x = self.robot_x + distancia * np.cos(self.robot_yaw)
+                                bandeira_y = self.robot_y + distancia * np.sin(self.robot_yaw)
+
+                                # Converte para grid
+                                grid_x, grid_y = self.world_to_grid(bandeira_x, bandeira_y)
+
+                                if self.is_in_map(grid_x, grid_y):
+                                    self.grid_map[grid_y, grid_x] = 0.75  # Marca bandeira
+
+                                    self.get_logger().info(f'Bandeira mapeada no grid em ({grid_x}, {grid_y}) '
+                                                        f'com distância {distancia:.2f}m')
+
+                                self.bandeira_x = bandeira_x
+                                self.bandeira_y = bandeira_y
+                                self.bandeira_mapeada = True
+                            else:
+                                self.get_logger().warn('Distância LIDAR inválida para bandeira detectada.')
 
     def move_robot(self):
         twist = Twist()
@@ -253,6 +277,7 @@ class ControleRobo(Node):
                     self.state = "Giro"
 
         self.cmd_vel_pub.publish(twist)
+        self.show_grid()
 
     def world_to_grid(self, x, y):
         map_center = self.map_size // 2
@@ -280,14 +305,26 @@ class ControleRobo(Node):
             self.grid_map[grid_y, grid_x] = 0.5  # 0.5 = posição atual do robô
 
 
+
         # Log informativo
         self.get_logger().info(
             f'Pose recebida -> Posição: x={pos.x:.2f}, y={pos.y:.2f}, z={pos.z:.2f}, '
             f'Orientação (quaternion): x={ori.x:.2f}, y={ori.y:.2f}, z={ori.z:.2f}, w={ori.w:.2f}, '
             f'Yaw: {np.degrees(self.robot_yaw):.2f}°'
         )
+        if not self.pos_inicial_salva:
+            self.robot_init_x = self.robot_x
+            self.robot_init_y = self.robot_y
+            self.pos_inicial_salva = True
+            self.get_logger().info(f'Posição inicial salva: ({self.robot_init_x:.2f}, {self.robot_init_y:.2f})')
 
-        self.show_grid()
+        if self.pos_inicial_salva:
+            init_grid_x, init_grid_y = self.world_to_grid(self.robot_init_x, self.robot_init_y)
+            if self.is_in_map(init_grid_x, init_grid_y):
+                self.grid_map[init_grid_y, init_grid_x] = 0.9
+
+        self.odom_received = True
+
 
 def main(args=None):
     rclpy.init(args=args)
