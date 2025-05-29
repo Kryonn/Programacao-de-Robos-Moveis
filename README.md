@@ -54,7 +54,8 @@ Certifique-se de estar na **raiz do seu workspace** (geralmente `~/ros2_ws`) ant
 cd ~/ros2_ws
 colcon build --symlink-install --packages-select trabalho_1
 ```
-
+> Certifique-se de ter o colcon instalado: `sudo apt install python3-colcon-common-extensions -y`   
+   
 ### 4. Atualizar o ambiente do terminal
 
 ```bash
