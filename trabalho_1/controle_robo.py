@@ -62,7 +62,8 @@ class ControleRobo(Node):
         self.ultima_scan = None
         self.bandeira_mapeada = False
         self.odom_received = False
-
+        self.bandeira_posicoes = []
+         
     def is_in_map(self, grid_x, grid_y):
         return 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size
 
@@ -203,14 +204,21 @@ class ControleRobo(Node):
                                 grid_x, grid_y = self.world_to_grid(bandeira_x, bandeira_y)
 
                                 if self.is_in_map(grid_x, grid_y):
-                                    self.grid_map[grid_y, grid_x] = 0.75  # Marca bandeira
+                                    if len(self.bandeira_posicoes) < 10:
+                                        self.bandeira_posicoes.append((grid_x, grid_y))
 
-                                    self.get_logger().info(f'Bandeira mapeada no grid em ({grid_x}, {grid_y}) '
-                                                        f'com distância {distancia:.2f}m')
+                                    # Se já tiver posições suficientes, calcula a média
+                                    if len(self.bandeira_posicoes) == 10:
+                                        media_x = int(sum(pos[0] for pos in self.bandeira_posicoes) / 10)
+                                        media_y = int(sum(pos[1] for pos in self.bandeira_posicoes) / 10)
 
-                                self.bandeira_x = bandeira_x
-                                self.bandeira_y = bandeira_y
-                                self.bandeira_mapeada = True
+                                        # Marca no grid a posição média
+                                        if self.is_in_map(media_x, media_y):
+                                            self.grid_map[media_y, media_x] = 0.75  # Marca bandeira na posição média
+                                            self.get_logger().info(f'Bandeira mapeada na média ({media_x}, {media_y})')
+                                            self.bandeira_x = media_x
+                                            self.bandeira_y = media_y
+                                            self.bandeira_mapeada = True
                             else:
                                 self.get_logger().warn('Distância LIDAR inválida para bandeira detectada.')
 
