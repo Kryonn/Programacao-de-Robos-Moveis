@@ -5,8 +5,8 @@ import numpy as np
 import time
 from rclpy.node import Node
 
-from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
+import heapq
 
 
 from sensor_msgs.msg import LaserScan, Imu, Image
@@ -276,7 +276,7 @@ class ControleRobo(Node):
                 if not self.bandeira_identificada:
                     self.state = "Busca"
                 else:
-                    if self.error == 0.0:
+                    if abs(self.error) < 2:
                         self.state = "Andar_bandeira"
 
             # Andar_bandeira: anda até a bandeira
@@ -392,6 +392,43 @@ class ControleRobo(Node):
                 self.grid_map[init_grid_y, init_grid_x] = 0.9
 
         self.odom_received = True
+
+    
+
+    def a_star(self, grid, start, goal):
+        def heuristic(a, b):
+            return abs(a[0] - b[0]) + abs(a[1] - b[1])
+        rows, cols = grid.shape
+        open_set = []
+        heapq.heappush(open_set, (0, start))
+        came_from = {}
+        g_score = {start: 0}
+
+        while open_set:
+            current_f, current = heapq.heappop(open_set)
+            if current == goal:
+                path = []
+                while current in came_from:
+                    path.append(current)
+                    current = came_from[current]
+                path.append(start)
+                path.reverse()
+                return path
+
+            x, y = current
+            for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
+                neighbor = (x + dx, y + dy)
+                nx, ny = neighbor
+                if 0 <= nx < rows and 0 <= ny < cols and grid[ny, nx] == 0:
+                    tentative_g_score = g_score[current] + 1
+                    if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+                        came_from[neighbor] = current
+                        g_score[neighbor] = tentative_g_score
+                        f_score = tentative_g_score + heuristic(neighbor, goal)
+                        heapq.heappush(open_set, (f_score, neighbor))
+
+        return None
+
 
 
 def main(args=None):
