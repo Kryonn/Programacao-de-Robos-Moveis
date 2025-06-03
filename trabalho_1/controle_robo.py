@@ -64,6 +64,7 @@ class ControleRobo(Node):
         self.robot_init_y = 0.0
         self.ultima_scan = None
         self.bandeira_mapeada = False
+        self.flag_recalcular = False
         self.odom_received = False
         self.bandeira_posicoes = []
          
@@ -222,6 +223,7 @@ class ControleRobo(Node):
                                             self.bandeira_x = media_x
                                             self.bandeira_y = media_y
                                             self.bandeira_mapeada = True
+                                            self.state = "Planejar_Caminho"
                             else:
                                 self.get_logger().warn('Distância LIDAR inválida para bandeira detectada.')
 
@@ -332,12 +334,11 @@ class ControleRobo(Node):
         self.cmd_vel_pub.publish(twist)
         self.show_grid()
 
-    # Função para chamar a a_estrela
     def planejar_caminho_astar(self):
         atual_x, atual_y = self.world_to_grid(self.robot_x, self.robot_y)
         start = (atual_x, atual_y)
         goal = (self.bandeira_x, self.bandeira_y)
-        caminho = a_estrela(start, goal, self.grid_map)
+        caminho = self.a_star(self.grid_map, start, goal)
         return caminho
 
 
