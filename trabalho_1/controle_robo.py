@@ -20,6 +20,9 @@ class ControleRobo(Node):
     def __init__(self):
         super().__init__('controle_robo')
 
+        self.caminho_a_estrela = []  # Lista de posições do caminho
+        self.index_alvo = 0          # Índice do ponto atual no caminho
+
         # Publisher para comando de velocidade
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
 
@@ -282,14 +285,73 @@ class ControleRobo(Node):
                 if self.obstaculo_a_frente:
                     self.state = "Giro"
 
+            case "Planejar_Caminho":
+                if self.bandeira_mapeada:
+                    self.caminho_a_estrela = self.planejar_caminho_astar()
+                    self.index_alvo = 0
+                    if self.caminho_a_estrela:
+                        self.state = "Seguir_Caminho"
+                    else:
+                        self.get_logger().warn("Caminho A* não encontrado.")
+
+            case "Seguir_Caminho":
+                if self.index_alvo >= len(self.caminho_a_estrela):
+                    self.get_logger().info("Chegou à bandeira!")
+                    self.state = "Parado"
+                else:
+                    # flag que indica a necessidade de recalcular o caminho
+                    if self.flag_recalcular:
+                        self.get_logger().warn("Recalculando caminho.")
+                        self.state = "Planejar_Caminho"
+                    else:
+                        # Posição alvo no grid
+                        grid_x, grid_y = self.caminho_a_estrela[self.index_alvo]
+                        target_x, target_y = self.grid_to_world(grid_x, grid_y)
+
+                        # Diferença para o alvo
+                        dx = target_x - self.robot_x
+                        dy = target_y - self.robot_y
+                        dist = np.hypot(dx, dy)
+                        angulo_alvo = np.arctan2(dy, dx)
+                        erro_ang = angulo_alvo - self.robot_yaw
+
+                        # Normaliza ângulo para [-pi, pi]
+                        erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
+
+                        if dist < 0.05:  # Se já chegou na célula alvo
+                            self.index_alvo += 1
+                        else:
+                            twist.linear.x = 0.1
+                            twist.angular.z = 0.5 * erro_ang
+
+            case "Parado":
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
+
+
         self.cmd_vel_pub.publish(twist)
         self.show_grid()
+
+    # Função para chamar a a_estrela
+    def planejar_caminho_astar(self):
+        atual_x, atual_y = self.world_to_grid(self.robot_x, self.robot_y)
+        start = (atual_x, atual_y)
+        goal = (self.bandeira_x, self.bandeira_y)
+        caminho = a_estrela(start, goal, self.grid_map)
+        return caminho
+
 
     def world_to_grid(self, x, y):
         map_center = self.map_size // 2
         grid_x = int(map_center + (x / self.resolution))
         grid_y = int(map_center + (y / self.resolution))
         return grid_x, grid_y
+    
+    def grid_to_world(self, grid_x, grid_y):
+        map_center = self.map_size // 2
+        world_x = (grid_x - map_center) * self.resolution
+        world_y = (grid_y - map_center) * self.resolution
+        return world_x, world_y
 
 
     def pose_callback(self, msg: Pose):
