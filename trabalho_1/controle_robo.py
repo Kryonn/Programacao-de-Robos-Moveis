@@ -128,6 +128,8 @@ class ControleRobo(Node):
                 val = self.grid_map[y, x]
                 if val == 0.0:
                     color = (0, 0, 0)  # Preto - livre
+                elif val == 0.2:
+                    color = (0, 0, 255)  # Vermelho - caminho
                 elif val == 1.0:
                     color = (255, 255, 255)  # Branco - obstáculo
                 elif val == 0.5:
@@ -290,6 +292,10 @@ class ControleRobo(Node):
             case "Planejar_Caminho":
                 if self.bandeira_mapeada:
                     self.caminho_a_estrela = self.planejar_caminho_astar()
+                    self.get_logger().warn(f'Caminho: {self.caminho_a_estrela}') # imprime caminho
+                    for a, b in self.caminho_a_estrela:
+                        self.grid_map[b, a] = 0.2
+
                     self.index_alvo = 0
                     if self.caminho_a_estrela:
                         self.state = "Seguir_Caminho"
@@ -320,7 +326,7 @@ class ControleRobo(Node):
                         # Normaliza ângulo para [-pi, pi]
                         erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
 
-                        if dist < 0.05:  # Se já chegou na célula alvo
+                        if dist <= 2:  # Se já chegou na célula alvo
                             self.index_alvo += 1
                         else:
                             twist.linear.x = 0.1
@@ -333,6 +339,7 @@ class ControleRobo(Node):
 
         self.cmd_vel_pub.publish(twist)
         self.show_grid()
+        self.get_logger().warn(f'{self.state}') # imprime o estado atual do robô
 
     def planejar_caminho_astar(self):
         atual_x, atual_y = self.world_to_grid(self.robot_x, self.robot_y)
@@ -396,17 +403,58 @@ class ControleRobo(Node):
 
     
 
+    # def a_star(self, grid, start, goal):
+    #     def heuristic(a, b):
+    #         return abs(a[0] - b[0]) + abs(a[1] - b[1])
+    #     rows, cols = grid.shape
+    #     open_set = []
+    #     heapq.heappush(open_set, (0, start))
+    #     came_from = {}
+    #     g_score = {start: 0}
+
+    #     while open_set:
+    #         current_f, current = heapq.heappop(open_set)
+    #         if current == goal:
+    #             path = []
+    #             while current in came_from:
+    #                 path.append(current)
+    #                 current = came_from[current]
+    #             path.append(start)
+    #             path.reverse()
+    #             return path
+
+    #         x, y = current
+    #         for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
+    #             neighbor = (x + dx, y + dy)
+    #             nx, ny = neighbor
+    #             if 0 <= nx < rows and 0 <= ny < cols and grid[ny, nx] == 0:
+    #                 tentative_g_score = g_score[current] + 1
+    #                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
+    #                     came_from[neighbor] = current
+    #                     g_score[neighbor] = tentative_g_score
+    #                     f_score = tentative_g_score + heuristic(neighbor, goal)
+    #                     heapq.heappush(open_set, (f_score, neighbor))
+
+    #     return None
+
     def a_star(self, grid, start, goal):
         def heuristic(a, b):
+            # Distância de Manhattan (adequada para grids 4-direções)
             return abs(a[0] - b[0]) + abs(a[1] - b[1])
-        rows, cols = grid.shape
-        open_set = []
-        heapq.heappush(open_set, (0, start))
+        
+        # Direções possíveis (4-vizinhança)
+        neighbors = [(0, 1), (1, 0), (0, -1), (-1, 0)]
+        
+        close_set = set()
         came_from = {}
-        g_score = {start: 0}
-
+        gscore = {start: 0}
+        fscore = {start: heuristic(start, goal)}
+        open_set = []
+        heapq.heappush(open_set, (fscore[start], start))
+        
         while open_set:
-            current_f, current = heapq.heappop(open_set)
+            current = heapq.heappop(open_set)[1]
+            
             if current == goal:
                 path = []
                 while current in came_from:
@@ -415,21 +463,34 @@ class ControleRobo(Node):
                 path.append(start)
                 path.reverse()
                 return path
-
-            x, y = current
-            for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
-                neighbor = (x + dx, y + dy)
-                nx, ny = neighbor
-                if 0 <= nx < rows and 0 <= ny < cols and grid[ny, nx] == 0:
-                    tentative_g_score = g_score[current] + 1
-                    if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                        came_from[neighbor] = current
-                        g_score[neighbor] = tentative_g_score
-                        f_score = tentative_g_score + heuristic(neighbor, goal)
-                        heapq.heappush(open_set, (f_score, neighbor))
-
-        return None
-
+                
+            close_set.add(current)
+            
+            for i, j in neighbors:
+                neighbor = current[0] + i, current[1] + j
+                
+                # Verifica se está dentro do grid
+                if not (0 <= neighbor[0] < grid.shape[0] and 0 <= neighbor[1] < grid.shape[1]):
+                    continue
+                    
+                # Verifica se não é obstáculo (0 = livre, 1 = obstáculo)
+                if grid[neighbor[0], neighbor[1]] == 1.0:
+                    continue
+                    
+                # Calcula custo temporário
+                tentative_g_score = gscore[current] + 1  # Custo entre células adjacentes = 1
+                
+                if neighbor in close_set and tentative_g_score >= gscore.get(neighbor, float('inf')):
+                    continue
+                    
+                if tentative_g_score < gscore.get(neighbor, float('inf')):
+                    came_from[neighbor] = current
+                    gscore[neighbor] = tentative_g_score
+                    fscore[neighbor] = tentative_g_score + heuristic(neighbor, goal)
+                    if neighbor not in [i[1] for i in open_set]:
+                        heapq.heappush(open_set, (fscore[neighbor], neighbor))
+        
+        return None  # Caminho não encontrado
 
 
 def main(args=None):
@@ -442,3 +503,6 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
+# pkill -f gazebo && pkill -f roslaunch && pkill -f rosmaster

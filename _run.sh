@@ -49,5 +49,5 @@ open_terminal "Controle" "
 cd $WS
 source /opt/ros/humble/setup.bash
 source install/local_setup.bash
-sleep 15
+sleep 10
 ros2 run trabalho_1 controle_robo"
