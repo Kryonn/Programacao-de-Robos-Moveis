@@ -214,13 +214,13 @@ class ControleRobo(Node):
                                 grid_x, grid_y = self.world_to_grid(bandeira_x, bandeira_y)
 
                                 if self.is_in_map(grid_x, grid_y):
-                                    if len(self.bandeira_posicoes) < 10:
+                                    if len(self.bandeira_posicoes) < 4:
                                         self.bandeira_posicoes.append((grid_x, grid_y))
 
                                     # Se já tiver posições suficientes, calcula a média
-                                    if len(self.bandeira_posicoes) == 10:
-                                        media_x = int(sum(pos[0] for pos in self.bandeira_posicoes) / 10)
-                                        media_y = int(sum(pos[1] for pos in self.bandeira_posicoes) / 10)
+                                    if len(self.bandeira_posicoes) == 4:
+                                        media_x = int(sum(pos[0] for pos in self.bandeira_posicoes) / 4)
+                                        media_y = int(sum(pos[1] for pos in self.bandeira_posicoes) / 4)
 
                                         # Marca no grid a posição média
                                         if self.is_in_map(media_x, media_y):
@@ -252,11 +252,11 @@ class ControleRobo(Node):
         # Valida e registra a bandeira simulada
         if self.is_in_map(grid_x, grid_y):
             # Preenche a lista de posições com a mesma posição várias vezes, simulando estabilidade
-            self.bandeira_posicoes = [(grid_x, grid_y) for _ in range(10)]
+            self.bandeira_posicoes = [(grid_x, grid_y) for _ in range(4)]
 
             # Calcula a média das posições simuladas
-            media_x = int(sum(pos[0] for pos in self.bandeira_posicoes) / 10)
-            media_y = int(sum(pos[1] for pos in self.bandeira_posicoes) / 10)
+            media_x = int(sum(pos[0] for pos in self.bandeira_posicoes) / 4)
+            media_y = int(sum(pos[1] for pos in self.bandeira_posicoes) / 4)
 
             # Marca no grid a posição média
             if self.is_in_map(media_x, media_y):
@@ -463,40 +463,6 @@ class ControleRobo(Node):
         self.odom_received = True
 
     
-
-    # def a_star(self, grid, start, goal):
-    #     def heuristic(a, b):
-    #         return abs(a[0] - b[0]) + abs(a[1] - b[1])
-    #     rows, cols = grid.shape
-    #     open_set = []
-    #     heapq.heappush(open_set, (0, start))
-    #     came_from = {}
-    #     g_score = {start: 0}
-
-    #     while open_set:
-    #         current_f, current = heapq.heappop(open_set)
-    #         if current == goal:
-    #             path = []
-    #             while current in came_from:
-    #                 path.append(current)
-    #                 current = came_from[current]
-    #             path.append(start)
-    #             path.reverse()
-    #             return path
-
-    #         x, y = current
-    #         for dx, dy in [(-1,0), (1,0), (0,-1), (0,1)]:
-    #             neighbor = (x + dx, y + dy)
-    #             nx, ny = neighbor
-    #             if 0 <= nx < rows and 0 <= ny < cols and grid[ny, nx] == 0:
-    #                 tentative_g_score = g_score[current] + 1
-    #                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-    #                     came_from[neighbor] = current
-    #                     g_score[neighbor] = tentative_g_score
-    #                     f_score = tentative_g_score + heuristic(neighbor, goal)
-    #                     heapq.heappush(open_set, (f_score, neighbor))
-
-    #     return None
 
     def a_star(self, grid, start, goal):
         def heuristic(a, b):
