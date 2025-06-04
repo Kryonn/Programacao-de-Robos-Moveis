@@ -55,7 +55,7 @@ class ControleRobo(Node):
         self.map_size = 100  # Ex: 200x200 células
         self.resolution = 0.1  # Cada célula = 10 cm
         self.grid_map = np.zeros((self.map_size, self.map_size))
-
+        self.simular_bandeira = True
         self.robot_x = 0.0
         self.robot_y = 0.0
         self.robot_yaw = 0.0
@@ -161,9 +161,11 @@ class ControleRobo(Node):
         pass
 
     def camera_callback(self, msg: Image):
+        if self.simular_bandeira:
+            self.simular_bandeira_detectada()
+            return
         # Converte mensagem ROS para imagem OpenCV (BGR)
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-
         # Extraindo os valores relacionados ao tamanho da imagem gerada
         height, width, _ = frame.shape
 
@@ -230,6 +232,43 @@ class ControleRobo(Node):
                                             self.state = "Planejar_Caminho"
                             else:
                                 self.get_logger().warn('Distância LIDAR inválida para bandeira detectada.')
+
+    def simular_bandeira_detectada(self):
+        """
+        Função de simulação para testes, que força a identificação de uma bandeira
+        e o mapeamento de sua posição no grid.
+
+        Para usar a simulação, basta chamar esta função no início do código
+        ou dentro de outro método como substituição temporária à detecção real.
+        """
+
+        # Calcula a posição global da bandeira
+        bandeira_x = 1.8
+        bandeira_y = 0
+
+        # Converte para grid
+        grid_x, grid_y = self.world_to_grid(bandeira_x, bandeira_y)
+
+        # Valida e registra a bandeira simulada
+        if self.is_in_map(grid_x, grid_y):
+            # Preenche a lista de posições com a mesma posição várias vezes, simulando estabilidade
+            self.bandeira_posicoes = [(grid_x, grid_y) for _ in range(10)]
+
+            # Calcula a média das posições simuladas
+            media_x = int(sum(pos[0] for pos in self.bandeira_posicoes) / 10)
+            media_y = int(sum(pos[1] for pos in self.bandeira_posicoes) / 10)
+
+            # Marca no grid a posição média
+            if self.is_in_map(media_x, media_y):
+                self.grid_map[media_y, media_x] = 0.75  # Marca a bandeira na posição média
+                self.get_logger().info(f'Bandeira simulada mapeada na média ({media_x}, {media_y})')
+
+                # Atualiza as variáveis de estado
+                self.bandeira_x = media_x
+                self.bandeira_y = media_y
+                self.bandeira_mapeada = True
+                self.state = "Planejar_Caminho"
+
 
     def move_robot(self):
         twist = Twist()
@@ -345,8 +384,8 @@ class ControleRobo(Node):
 
     def planejar_caminho_astar(self):
         atual_x, atual_y = self.world_to_grid(self.robot_x, self.robot_y)
-        start = ( atual_y,atual_x)
-        goal = (self.bandeira_y, self.bandeira_x)
+        start = (atual_x, atual_y)
+        goal = (self.bandeira_x, self.bandeira_y)
         inflated_grid_for_astar = self.inflate_map(self.grid_map, 1)
         caminho = self.a_star(inflated_grid_for_astar, start, goal)
         return caminho
@@ -513,7 +552,7 @@ class ControleRobo(Node):
                         heapq.heappush(open_set, (fscore[neighbor], neighbor))
         
         return None  # Caminho não encontrado
-
+  
 
 def main(args=None):
     rclpy.init(args=args)
