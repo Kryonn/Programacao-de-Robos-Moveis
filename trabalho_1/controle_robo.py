@@ -138,6 +138,8 @@ class ControleRobo(Node):
                     color = (0, 255, 0)  # Verde - bandeira
                 elif val == 0.9:
                     color = (255, 0, 0)  # Azul - posição inicial
+                elif val == 0.95:
+                    color = (255, 255, 0)  # Amarelo - zona inflada
                 else:
                     color = (50, 50, 50)  # Default (livre escuro)
 
@@ -343,9 +345,10 @@ class ControleRobo(Node):
 
     def planejar_caminho_astar(self):
         atual_x, atual_y = self.world_to_grid(self.robot_x, self.robot_y)
-        start = (atual_x, atual_y)
-        goal = (self.bandeira_x, self.bandeira_y)
-        caminho = self.a_star(self.grid_map, start, goal)
+        start = ( atual_y,atual_x)
+        goal = (self.bandeira_y, self.bandeira_x)
+        inflated_grid_for_astar = self.inflate_map(self.grid_map, 1)
+        caminho = self.a_star(inflated_grid_for_astar, start, goal)
         return caminho
 
 
@@ -360,6 +363,25 @@ class ControleRobo(Node):
         world_x = (grid_x - map_center) * self.resolution
         world_y = (grid_y - map_center) * self.resolution
         return world_x, world_y
+
+    def inflate_map(self, grid, inflation_radius_cells):
+        rows, cols = grid.shape
+        inflated_grid = np.copy(grid) 
+
+        obstacle_indices_y, obstacle_indices_x = np.where(grid == 1.0)
+
+        for r, c in zip(obstacle_indices_y, obstacle_indices_x):
+            for dr in range(-inflation_radius_cells, inflation_radius_cells + 1):
+                for dc in range(-inflation_radius_cells, inflation_radius_cells + 1):
+                   
+
+                    nr, nc = r + dr, c + dc 
+
+                    if 0 <= nr < rows and 0 <= nc < cols:
+                        if inflated_grid[nr, nc] == 0.0:
+                            inflated_grid[nr, nc] = 0.95  # Marca a célula inflada como semi-obstáculo (0.95)
+
+        return inflated_grid
 
 
     def pose_callback(self, msg: Pose):
@@ -474,7 +496,7 @@ class ControleRobo(Node):
                     continue
                     
                 # Verifica se não é obstáculo (0 = livre, 1 = obstáculo)
-                if grid[neighbor[0], neighbor[1]] == 1.0:
+                if grid[neighbor[0], neighbor[1]] > 0.94 :
                     continue
                     
                 # Calcula custo temporário
