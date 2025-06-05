@@ -55,7 +55,7 @@ class ControleRobo(Node):
         self.map_size = 100  # Ex: 200x200 células
         self.resolution = 0.1  # Cada célula = 10 cm
         self.grid_map = np.zeros((self.map_size, self.map_size))
-        self.simular_bandeira = True
+        self.simular_bandeira = False
         self.robot_x = 0.0
         self.robot_y = 0.0
         self.robot_yaw = 0.0
@@ -82,10 +82,10 @@ class ControleRobo(Node):
             return
 
         # Para checar obstáculo à frente:
-        indices_frente = list(range(330, 360)) + list(range(0, 31))
+        indices_frente = list(range(340, 360)) + list(range(0, 21))
         distancias = [msg.ranges[i] for i in indices_frente if not np.isnan(msg.ranges[i])]
 
-        if distancias and min(distancias) < 0.5:
+        if distancias and ((not self.state == "Seguir_Caminho" and min(distancias) < 0.45) or (self.state == "Seguir_Caminho" and min(distancias) < 0.45)):
             indice = distancias.index(min(distancias))
             self.dir = "Direita" if indice <= 30 else "Esquerda"
             self.obstaculo_a_frente = True
@@ -126,8 +126,8 @@ class ControleRobo(Node):
         for y in range(self.map_size):
             for x in range(self.map_size):
                 val = self.grid_map[y, x]
-                if (x, y) in self.caminho_a_estrela:
-                    color = (0, 0, 255)  # Vermelho - caminho
+                if not self.caminho_a_estrela == None and (x, y) in self.caminho_a_estrela:
+                    color = (0, 0, 255)  # Vermelho - caminhxo
                 elif val == 0.0:
                     color = (0, 0, 0)  # Preto - livre
                 elif val == 0.2:
@@ -332,7 +332,7 @@ class ControleRobo(Node):
                 
                 # Giro: faz o robô girar para o lado que foi definido
                 case "Giro":
-                    twist.linear.x = 0.1
+                    # twist.linear.x = 0.1
 
                     if self.dir == "Direita":
                         twist.angular.z = 0.5
@@ -380,7 +380,7 @@ class ControleRobo(Node):
                         self.flag_recalcular = False
                         self.caminho_a_estrela = self.planejar_caminho_astar()
 
-                        if self.caminho_a_estrela:
+                        if not self.caminho_a_estrela == None:
                             self.get_logger().warn(f'Caminho: {self.caminho_a_estrela}') # imprime caminho
                             # for a, b in self.caminho_a_estrela:
                             #     self.grid_map[b, a] = 0.2
@@ -388,9 +388,13 @@ class ControleRobo(Node):
                             self.index_alvo = 0
                         else:
                             self.get_logger().warn("Caminho A* não encontrado.")
+                            self.state = "Busca"
 
                 case "Seguir_Caminho":
-                    if self.index_alvo >= len(self.caminho_a_estrela):
+                    if self.caminho_a_estrela == None:
+                        self.state = "Planejar_Caminho"
+
+                    elif self.index_alvo >= len(self.caminho_a_estrela):
                         self.get_logger().info("Chegou à bandeira!")
                         self.state = "Parado"
                     else:
@@ -413,7 +417,7 @@ class ControleRobo(Node):
                             # Normaliza ângulo para [-pi, pi]
                             erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
 
-                            if dist <= 0.02:  # Se já chegou na célula alvo
+                            if dist <= 0.08:  # Se já chegou na célula alvo
                                 self.get_logger().warn(f'indice: {self.index_alvo}')
                                 self.index_alvo = self.index_alvo + 1
                             else:
@@ -436,7 +440,10 @@ class ControleRobo(Node):
         inflated_grid_for_astar = self.inflate_map(self.grid_map, 3)
         # self.grid_map = inflated_grid_for_astar # debug
         caminho = self.a_star(inflated_grid_for_astar, start, goal)
-        return [x for i,x in enumerate(caminho) if i%2 == 0][3:] #ignora os primeiros pixels para não entrar em loop de recalcular sem se mover
+        if not caminho == None:
+            return [x for i,x in enumerate(caminho) if i%2 == 0][3:] #ignora os primeiros pixels para não entrar em loop de recalcular sem se mover
+        else:
+            return None
 
 
     def world_to_grid(self, x, y):
