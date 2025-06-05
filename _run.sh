@@ -11,6 +11,8 @@ colcon build --symlink-install --packages-select trabalho_1
 source /opt/ros/humble/setup.bash  # Ajuste para sua versão do ROS
 source install/local_setup.bash
 
+export LIBGL_ALWAYS_SOFTWARE=1
+
 # Função para abrir terminais (compatível com WSL1 e WSL2)
 open_terminal() {
     local title=$1

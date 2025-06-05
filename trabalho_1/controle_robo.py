@@ -126,7 +126,9 @@ class ControleRobo(Node):
         for y in range(self.map_size):
             for x in range(self.map_size):
                 val = self.grid_map[y, x]
-                if val == 0.0:
+                if (x, y) in self.caminho_a_estrela:
+                    color = (0, 0, 255)  # Vermelho - caminho
+                elif val == 0.0:
                     color = (0, 0, 0)  # Preto - livre
                 elif val == 0.2:
                     color = (0, 0, 255)  # Vermelho - caminho
@@ -198,7 +200,7 @@ class ControleRobo(Node):
                     self.bandeira_identificada = True   # Atualizando a flag
 
                      # Quando a bandeira estiver centralizada
-                    if abs(self.error) < 5:  # Limiar ajustável (em pixels)
+                    if abs(self.error) < 5 and not self.bandeira_mapeada:  # Limiar ajustável (em pixels)
                         if self.ultima_scan is not None:
                             # Pega a distância à frente (ângulo 0°)
                             num_ranges = len(self.ultima_scan.ranges)
@@ -250,7 +252,7 @@ class ControleRobo(Node):
         grid_x, grid_y = self.world_to_grid(bandeira_x, bandeira_y)
 
         # Valida e registra a bandeira simulada
-        if self.is_in_map(grid_x, grid_y):
+        if self.is_in_map(grid_x, grid_y) and not self.bandeira_mapeada:
             # Preenche a lista de posições com a mesma posição várias vezes, simulando estabilidade
             self.bandeira_posicoes = [(grid_x, grid_y) for _ in range(4)]
 
@@ -272,12 +274,13 @@ class ControleRobo(Node):
 
     def move_robot(self):
         twist = Twist()
+        self.get_logger().warn(f'{self.state}') # imprime o estado atual do robô
         # Transição dos estados
         match self.state:
 
             # Busca: anda para frente até encontrar um obstáculo ou a bandeira
             case "Busca":
-                twist.linear.x = 0.1
+                twist.linear.x = 0.2
                 if self.obstaculo_a_frente:
                     self.state = "Giro_inicio"
                 else:
@@ -326,20 +329,21 @@ class ControleRobo(Node):
 
             # Andar_bandeira: anda até a bandeira
             case "Andar_bandeira":
-                twist.linear.x = 0.1
+                twist.linear.x = 0.2
                 if self.obstaculo_a_frente:
                     self.state = "Giro"
 
             case "Planejar_Caminho":
                 if self.bandeira_mapeada:
+                    self.flag_recalcular = False
                     self.caminho_a_estrela = self.planejar_caminho_astar()
-                    self.get_logger().warn(f'Caminho: {self.caminho_a_estrela}') # imprime caminho
-                    for a, b in self.caminho_a_estrela:
-                        self.grid_map[b, a] = 0.2
 
-                    self.index_alvo = 0
                     if self.caminho_a_estrela:
+                        self.get_logger().warn(f'Caminho: {self.caminho_a_estrela}') # imprime caminho
+                        # for a, b in self.caminho_a_estrela:
+                        #     self.grid_map[b, a] = 0.2
                         self.state = "Seguir_Caminho"
+                        self.index_alvo = 0
                     else:
                         self.get_logger().warn("Caminho A* não encontrado.")
 
@@ -367,10 +371,12 @@ class ControleRobo(Node):
                         # Normaliza ângulo para [-pi, pi]
                         erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
 
-                        if dist <= 2:  # Se já chegou na célula alvo
-                            self.index_alvo += 1
+                        if dist <= 0.02:  # Se já chegou na célula alvo
+                            self.get_logger().warn(f'indice: {self.index_alvo}')
+                            self.index_alvo = self.index_alvo + 1
+                            self.flag_recalcular = True
                         else:
-                            twist.linear.x = 0.1
+                            twist.linear.x = 0.2
                             twist.angular.z = 0.5 * erro_ang
 
             case "Parado":
@@ -380,15 +386,16 @@ class ControleRobo(Node):
 
         self.cmd_vel_pub.publish(twist)
         self.show_grid()
-        self.get_logger().warn(f'{self.state}') # imprime o estado atual do robô
+        # self.get_logger().warn(f'{self.state}') # imprime o estado atual do robô
 
     def planejar_caminho_astar(self):
         atual_x, atual_y = self.world_to_grid(self.robot_x, self.robot_y)
         start = (atual_x, atual_y)
         goal = (self.bandeira_x, self.bandeira_y)
-        inflated_grid_for_astar = self.inflate_map(self.grid_map, 1)
+        inflated_grid_for_astar = self.inflate_map(self.grid_map, 3)
+        # self.grid_map = inflated_grid_for_astar # debug
         caminho = self.a_star(inflated_grid_for_astar, start, goal)
-        return caminho
+        return caminho[2:] #ignora os primeiros pixels para não entrar em loop de recalcular sem se mover
 
 
     def world_to_grid(self, x, y):
@@ -418,7 +425,7 @@ class ControleRobo(Node):
 
                     if 0 <= nr < rows and 0 <= nc < cols:
                         if inflated_grid[nr, nc] == 0.0:
-                            inflated_grid[nr, nc] = 0.95  # Marca a célula inflada como semi-obstáculo (0.95)
+                            inflated_grid[nr, nc] = 1.0  # Marca a célula inflada como semi-obstáculo (0.95)
 
         return inflated_grid
 
@@ -501,7 +508,7 @@ class ControleRobo(Node):
                     continue
                     
                 # Verifica se não é obstáculo (0 = livre, 1 = obstáculo)
-                if grid[neighbor[0], neighbor[1]] > 0.94 :
+                if grid[neighbor[0], neighbor[1]] == 1.0 :
                     continue
                     
                 # Calcula custo temporário
