@@ -3,6 +3,9 @@
 # Caminho até o workspace
 WS=~/ros2_ws
 
+# Salva o diretório atual
+DIR_INICIO=$(pwd)
+
 # Compilar o workspace
 cd "$WS" || exit
 colcon build --symlink-install --packages-select trabalho_1
@@ -33,23 +36,9 @@ open_terminal() {
 }
 
 # Abrir a simulação do Gazebo
-open_terminal "Gazebo" "
 cd $WS
 source /opt/ros/humble/setup.bash
 source install/local_setup.bash
-ros2 launch trabalho_1 inicia_simulacao.launch.py"
-
-# Abrir o terminal do robô
-open_terminal "Robô" "
-cd $WS
-source /opt/ros/humble/setup.bash
-source install/local_setup.bash
-ros2 launch trabalho_1 carrega_robo.launch.py"
-
-# Abrir o terminal do controle (com delay)
-open_terminal "Controle" "
-cd $WS
-source /opt/ros/humble/setup.bash
-source install/local_setup.bash
-sleep 10
-ros2 run trabalho_1 controle_robo"
+cd $DIR_INICIO
+pkill -f gazebo && pkill -f roslaunch && pkill -f rosmaster 
+ros2 launch trabalho_1 inicia_tudo.launch.py

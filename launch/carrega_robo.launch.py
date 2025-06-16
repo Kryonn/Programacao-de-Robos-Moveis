@@ -16,9 +16,9 @@ def generate_launch_description():
     # Caminho para o arquivo Xacro do robô
     # ------------------------------------------------------
     # Constrói o caminho absoluto para o arquivo `robot.urdf.xacro`,
-    # localizado na pasta `description` do pacote `prm`.
+    # localizado na pasta `description` do pacote `trabalho_1`.
     urdf_path = PathJoinSubstitution([
-        FindPackageShare("trabalho_1"),         # Diretório do pacote `prm`
+        FindPackageShare("trabalho_1"),         # Diretório do pacote `trabalho_1`
         "description",                   # Subpasta onde está o modelo
         "robot.urdf.xacro"               # Nome do arquivo Xacro
     ])
@@ -35,6 +35,12 @@ def generate_launch_description():
     # ------------------------------------------------------
     # Publica as transformações dos links do robô com base no URDF.
     # Requer o parâmetro 'robot_description' com o conteúdo do modelo.
+    diff_drive_params = PathJoinSubstitution([
+        FindPackageShare("trabalho_1"),
+        "config",
+        "controller_config.yaml"
+    ])
+    
     robot_state_publisher_node = Node(
         package="robot_state_publisher",
         executable="robot_state_publisher",
@@ -65,17 +71,21 @@ def generate_launch_description():
 
     # Inicialização do sistema de controle das rodas/motores do robo
     # o controle das rodas depende do estado das juntas
-    start_diff_controller = ExecuteProcess(
-        name="activate_diff_drive_base_controller",
-        cmd=[
-            "ros2",
-            "control",
-            "load_controller",
-            "--set-state",
-            "active",
-            "diff_drive_base_controller",
-        ],
-        shell=False,
+    start_diff_controller = Node(
+        package="controller_manager",
+        executable="spawner",
+        name="spawner_diff_drive_base_controller",
+        arguments=["diff_drive_base_controller"],
+        parameters=[diff_drive_params],
+        output="screen",
+    )
+
+    start_gripper_controller = Node(
+        package="controller_manager",
+        executable="spawner",
+        name="spawner_gripper_controller",
+        arguments=["gripper_controller"],
+        parameters=[diff_drive_params],
         output="screen",
     )
 
@@ -110,7 +120,7 @@ def generate_launch_description():
     # ------------------------------------------------------
     # RViz: visualização do robô
     # ------------------------------------------------------
-    # Carrega o arquivo de configuração do RViz a partir do pacote `prm`.
+    # Carrega o arquivo de configuração do RViz a partir do pacote `trabalho_1`.
     rviz_config_file = PathJoinSubstitution([
         FindPackageShare("trabalho_1"),
         "rviz",
@@ -168,10 +178,39 @@ def generate_launch_description():
             # Mensagem com anotacoes nao e suportado pelo ros_gz_bridge
             # Necessário para controladores como diff_drive_controller
             "/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock",
+            # Ground Truth de Posicao
             "/model/prm_robot/pose@geometry_msgs/msg/Pose[ignition.msgs.Pose",
         ],
         output="screen",
     )
+
+#  Nodo que publica odometria ground truth
+    odom_gt= Node(
+        package="trabalho_1",
+        executable="ground_truth_odometry",
+        name="odom_gt",
+        arguments="",
+        output="screen",
+    )
+
+#  Nodo que publica o mapa
+    robo_mapper= Node(
+        package="trabalho_1",
+        executable="robo_mapper",
+        name="robo_mapper",
+        arguments="",
+        output="screen",
+    )
+
+#  Casos vocês queiram carregar o controle do robô junto:
+#  Não esquecer de descomentar a linha no LaunchDescription
+#    controle= Node(
+#        package="trabalho_1",
+#        executable="controle_robo",
+#        name="controle_do_robo",
+#        arguments="",
+#        output="screen",
+#    )
 
     # ------------------------------------------------------
     # Definição da descrição completa do lançamento
@@ -193,7 +232,16 @@ def generate_launch_description():
                 on_exit=[start_diff_controller], # Carrega o sistema de controle das rodas/motores
             )
         ),
+        RegisterEventHandler(
+            event_handler=OnProcessExit(
+                target_action=start_diff_controller,
+                on_exit=[start_gripper_controller],
+            )
+        ),        
+        odom_gt,
+        robo_mapper,
         rviz_node,
-        relay_odom, # Nodos de redirecionamento de mensagens
-        relay_cmd_vel
+  #      relay_odom, # Nodos de redirecionamento de mensagens (Estamos usando apenas odom_gt agora)
+        relay_cmd_vel # Nodos de redirecionamento de mensagens
+  #      controle
     ])

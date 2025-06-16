@@ -59,9 +59,8 @@ setup(
     entry_points={
         'console_scripts': [
             'tartaruga = trabalho_1.controle_tartaruga:main',
-            'controle_robo = trabalho_1.controle_robo:main'
-            'ground_truth_odometry = trabalho_1.ground_truth_odometry:main',
             'controle_robo = trabalho_1.controle_robo:main',
+            'ground_truth_odometry = trabalho_1.ground_truth_odometry:main',
             'robo_mapper = trabalho_1.robo_mapper:main'
         ],
     },
