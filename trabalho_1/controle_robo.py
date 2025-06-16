@@ -155,7 +155,33 @@ class ControleRobo(Node):
 
     
     def imu_callback(self, msg: Imu):
-        # Mensagens da IMU!
+        # # Extraindo o quaternion da mensagemAdd commentMore actions
+        # orientation_q = msg.orientation
+        # quat = [
+        #     orientation_q.x,
+        #     orientation_q.y,
+        #     orientation_q.z,
+        #     orientation_q.w
+        # ]
+
+        # # Conversão para Euler usando SciPy
+        # r = R.from_quat(quat)
+        # roll, pitch, yaw = r.as_euler('xyz', degrees=True)
+
+        # # Exibindo resultados
+        # self.get_logger().info('IMU Data Received:')
+        # self.get_logger().info(
+        #     f'Orientation (Euler): Roll={roll:.2f}°, '
+        #     f'Pitch={pitch:.2f}°, Yaw={yaw:.2f}°'
+        # )
+        # self.get_logger().info(
+        #     f'Angular velocity: [{msg.angular_velocity.x:.2f}, '
+        #     f'{msg.angular_velocity.y:.2f}, {msg.angular_velocity.z:.2f}] rad/s'
+        # )
+        # self.get_logger().info(
+        #     f'Linear acceleration: [{msg.linear_acceleration.x:.2f}, '
+        #     f'{msg.linear_acceleration.y:.2f}, {msg.linear_acceleration.z:.2f}] m/s²'
+        # )
         pass
 
     def odom_callback(self, msg: Odometry):
