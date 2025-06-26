@@ -31,7 +31,7 @@ def generate_launch_description():
     # Verifica argumento com o nome do mundo que será simulado
     world_file_arg = DeclareLaunchArgument(
         'world',
-        default_value='arena.sdf',
+        default_value='arena_cilindros.sdf',
         description='Nome do arquivo .sdf do mundo a ser carregado'
     )
 
