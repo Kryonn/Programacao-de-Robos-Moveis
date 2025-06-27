@@ -50,12 +50,14 @@ class ControleRobo(Node):
         self.dir = "Direita"                # Direção do giro
         self.kp = 0.005                     # Ganho proporcional
         self.error = 0.0                    # Erro direcional
-        self.dist_garra  = 0.3              # Distancia máxima para identificar como garra
+
+        self.dist_garra  = 0.4              # Distancia máxima para identificar como garra
         self.dist_obstaculo  = 0.6          # Distancia mínima para obstáculo identificado
+        self.angulo_necessario = 40         # Giro do robô
 
         # Estados
         self.state = "Busca"                # "Busca", "Giro_inicio", "Giro", "Giro_fim", 
-                                            # "Busca_bandeira", "Andar_bandeira".
+                                            # "Alinha_bandeira", "Andar_bandeira".
 
         # Flags
         self.giro = False                   # Condição de início do giro 
@@ -112,14 +114,15 @@ class ControleRobo(Node):
         # Para checar obstáculo à frente:
         indices_frente = list(range(330, 360)) + list(range(0, 31))
         
-        distancias = [msg.ranges[i] for i in indices_frente if not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra]
+        distancias = [msg.ranges[i] for i in indices_frente if (not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra)]
 
         if distancias and (min(distancias) < self.dist_obstaculo): # identifica obstaculo ignorando a garra
             indice = distancias.index(min(distancias))
             self.dir = "Direita" if indice <= 30 else "Esquerda"
             self.obstaculo_a_frente = True
-            self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(min(distancias)))
+            self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(min(distancias)) + f', na {self.dir}')
         else:
+            self.get_logger().info('Sem obstáculo')
             self.obstaculo_a_frente = False
 
         #  mapeando obstáculos no grid
@@ -195,7 +198,10 @@ class ControleRobo(Node):
 
         # Conversão para Euler usando SciPy
         r = R.from_quat(quat)
-        roll, self.pitch, self.robot_yaw = r.as_euler('xyz', degrees=True)
+        roll, self.pitch, yaw = r.as_euler('xyz', degrees=True)
+
+        self.robot_yaw = (yaw + 360) % 360
+
 
         # Exibindo resultados
         # self.get_logger().info('IMU Data Received:')
@@ -327,162 +333,147 @@ class ControleRobo(Node):
                 self.state = "Planejar_Caminho"
 
 
+    def angulo_delta(self, yaw_atual, yaw_anterior):
+        delta = yaw_atual - yaw_anterior
+        while delta > 180:
+            delta -= 360
+        while delta < -180:
+            delta += 360
+        return delta
+
+
+
     def move_robot(self):
         twist = Twist()
-        self.get_logger().warn(f'{self.state}') # imprime o estado atual do robô
+        self.get_logger().info(f'{self.state}') # imprime o estado atual do robô
+
         # Transição dos estados
-        if(self.obstaculo_a_frente):
-            if self.state not in ["Giro_inicio", "Giro", "Giro_fim"]:
-                self.state = "Giro_inicio"
-            match self.state:
-                # Giro_início: atualiza a flag de giro e registra o valor do tempo de início
-                case "Giro_inicio":
-                    self.giro = True
-                    self.yaw_ant = self.robot_yaw
-                    self.state = "Giro"
-                
-                # Giro: faz o robô girar para o lado que foi definido
-                case "Giro":
-                    twist.linear.x = 0.15
+        match self.state:
+            case "Afasta":
+                # Tempo inicial
+                inicio = self.get_clock().now()
 
-                    if self.dir == "Direita":
-                        twist.angular.z = 0.3
-                    else:
-                        twist.angular.z = -0.3
+                # Envia o comando pelo tempo em 'duracao'
+                duracao = 2e9   # n segundos = n * 10^9 ns
 
-                    angulo_decorrido = self.robot_yaw - self.yaw_ant
-                    # Giro do robô
-                    angulo_necessario = 20
+                while (self.get_clock().now() - inicio).nanoseconds < duracao:  
+                    twist.linear.x = -0.2
+                    self.cmd_vel_pub.publish(twist)
 
-                    if abs(angulo_decorrido) >= angulo_necessario:
-                        self.giro = False
-                        twist.angular.z = 0.0
-                        self.state = "Giro_fim"
-                
-                # Giro_fim: finaliza o giro
-                case "Giro_fim":
-                    if not self.obstaculo_a_frente:
-                        if (self.bandeira_mapeada):
-                            self.flag_recalcular = True
-                            self.state = "Seguir_Caminho"
-                    else:
-                            self.state = "Giro_inicio"
-                    
-        else:
-            match self.state:
+                self.yaw_ant = self.robot_yaw
+                self.state = "Giro"
 
-                # Busca: anda para frente até encontrar um obstáculo ou a bandeira
-                case "Busca":
-                    twist.linear.x = 0.2
-                    if self.obstaculo_a_frente:
-                        self.state = "Giro_inicio"
-                    else:
-                        if self.bandeira_identificada:
-                            self.state = "Busca_bandeira"
+            # Giro: faz o robô girar para o lado que foi definido
+            case "Giro":
+                twist.linear.x = 0.15
 
-                # Giro_início: atualiza a flag de giro e registra o valor do tempo de início
-                case "Giro_inicio":
-                    self.giro = True
-                    self.yaw_ant = self.robot_yaw
-                    self.state = "Giro"
-                
-                # Giro: faz o robô girar para o lado que foi definido
-                case "Giro":
-                    twist.linear.x = 0.15
+                if self.dir == "Direita":
+                    twist.angular.z = 0.3
+                else:
+                    twist.angular.z = -0.3
 
-                    if self.dir == "Direita":
-                        twist.angular.z = 0.5
-                    else:
-                        twist.angular.z = -0.5
+                # self.get_logger().info(f'angulo anterior: {self.yaw_ant}, angulo atual: {self.robot_yaw}')
+                # angulo_decorrido = self.robot_yaw - self.yaw_ant
+                angulo_decorrido = self.angulo_delta(self.robot_yaw, self.yaw_ant)
 
-                    angulo_decorrido = self.robot_yaw - self.yaw_ant
-                    # Giro do robô
-                    angulo_necessario = 30
+                # Terminou o primeiro giro
+                if abs(angulo_decorrido) >= self.angulo_necessario:
+                    self.get_logger().info(f'angulo decorrido: {angulo_decorrido}')
+                    self.get_logger().info("Fim do Giro")
 
-                    if angulo_decorrido >= angulo_necessario:
-                        self.giro = False
-                        twist.angular.z = 0.0
-                        self.state = "Giro_fim"
-                
-                # Giro_fim: finaliza o giro
-                case "Giro_fim":
-                    if not self.obstaculo_a_frente:
-                        if (self.bandeira_mapeada):
-                            self.flag_recalcular = True
-                            self.state = "Seguir_Caminho"
-                        else:
-                            self.state = "Busca"
-                    else:
-                        self.state = "Giro_inicio"
-
-                # Busca_bandeira: gira em direção à bandeira
-                case "Busca_bandeira":
-                    twist.linear.x = 0.0
-                    twist.angular.z = -self.kp * self.error
-                    if not self.bandeira_identificada:
-                        self.state = "Busca"
-                    else:
-                        if abs(self.error) < 2:
-                            self.state = "Andar_bandeira"
-
-                # Andar_bandeira: anda até a bandeira
-                case "Andar_bandeira":
-                    twist.linear.x = 0.2
-                    if self.obstaculo_a_frente:
-                        self.state = "Giro"
-
-                case "Planejar_Caminho":
-                    if self.bandeira_mapeada:
-                        self.flag_recalcular = False
-                        self.caminho_a_estrela = self.planejar_caminho_astar()
-
-                        if not self.caminho_a_estrela == None:
-                            self.get_logger().warn(f'Caminho: {self.caminho_a_estrela}') # imprime caminho
-                            # for a, b in self.caminho_a_estrela:
-                            #     self.grid_map[b, a] = 0.2
-                            self.state = "Seguir_Caminho"
-                            self.index_alvo = 0
-                        else:
-                            self.get_logger().warn("Caminho A* não encontrado.")
-                            self.state = "Busca"
-
-                case "Seguir_Caminho":
-                    if self.caminho_a_estrela == None:
-                        self.state = "Planejar_Caminho"
-
-                    elif self.index_alvo >= len(self.caminho_a_estrela):
-                        self.get_logger().info("Chegou à bandeira!")
-                        self.state = "Parado"
-                    else:
-                        # flag que indica a necessidade de recalcular o caminho
-                        if self.flag_recalcular:
-                            self.get_logger().warn("Recalculando caminho.")
-                            self.state = "Planejar_Caminho"
-                        else:
-                            # Posição alvo no grid
-                            grid_x, grid_y = self.caminho_a_estrela[self.index_alvo]
-                            target_x, target_y = self.grid_to_world(grid_x, grid_y)
-
-                            # Diferença para o alvo
-                            dx = target_x - self.robot_x
-                            dy = target_y - self.robot_y
-                            dist = np.hypot(dx, dy)
-                            angulo_alvo = np.arctan2(dy, dx)
-                            erro_ang = angulo_alvo - self.robot_yaw
-
-                            # Normaliza ângulo para [-pi, pi]
-                            erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
-
-                            if dist <= 0.08:  # Se já chegou na célula alvo
-                                self.get_logger().warn(f'indice: {self.index_alvo}')
-                                self.index_alvo = self.index_alvo + 1
-                            else:
-                                twist.linear.x = 0.2
-                                twist.angular.z = 0.5 * erro_ang
-
-                case "Parado":
-                    twist.linear.x = 0.0
                     twist.angular.z = 0.0
+                    
+                    if not self.obstaculo_a_frente:
+                        # Se a bandeira já foi mapeada, segue o caminho
+                        if (self.bandeira_mapeada):
+                            self.flag_recalcular = True
+                            self.state = "Seguir_Caminho"
+                        # Senão, continua a busca
+                        else:
+                            self.state = "Busca"
+                    else:
+                        # Se ainda há obstáculo, atualiza o ângulo de referência com o atual e continua no giro
+                        self.yaw_ant = self.robot_yaw
+                        self.state = "Giro"
+        
+            # Busca: anda para frente até encontrar um obstáculo ou a bandeira
+            case "Busca":
+                twist.linear.x = 0.2
+                if self.obstaculo_a_frente:
+                    self.state = "Afasta"
+
+                else:
+                    if self.bandeira_identificada:
+                        self.state = "Alinha_bandeira"
+
+            # Alinha_bandeira: gira em direção à bandeira
+            case "Alinha_bandeira":
+                twist.linear.x = 0.0
+                twist.angular.z = -self.kp * self.error
+                if not self.bandeira_identificada:
+                    self.state = "Busca"
+                else:
+                    if abs(self.error) < 2:
+                        self.state = "Andar_bandeira"
+
+            # Andar_bandeira: anda até a bandeira
+            case "Andar_bandeira":
+                twist.linear.x = 0.2
+                if self.obstaculo_a_frente:
+                    self.state = "Afasta"
+
+            case "Planejar_Caminho":
+                if self.bandeira_mapeada:
+                    self.flag_recalcular = False
+                    self.caminho_a_estrela = self.planejar_caminho_astar()
+
+                    if not self.caminho_a_estrela == None:
+                        self.get_logger().warn(f'Caminho: {self.caminho_a_estrela}') # imprime caminho
+                        # for a, b in self.caminho_a_estrela:
+                        #     self.grid_map[b, a] = 0.2
+                        self.state = "Seguir_Caminho"
+                        self.index_alvo = 0
+                    else:
+                        self.get_logger().warn("Caminho A* não encontrado.")
+                        self.state = "Busca"
+
+            case "Seguir_Caminho":
+                if self.caminho_a_estrela == None:
+                    self.state = "Planejar_Caminho"
+
+                elif self.index_alvo >= len(self.caminho_a_estrela):
+                    self.get_logger().info("Chegou à bandeira!")
+                    self.state = "Parado"
+                else:
+                    # flag que indica a necessidade de recalcular o caminho
+                    if self.flag_recalcular:
+                        self.get_logger().warn("Recalculando caminho.")
+                        self.state = "Planejar_Caminho"
+                    else:
+                        # Posição alvo no grid
+                        grid_x, grid_y = self.caminho_a_estrela[self.index_alvo]
+                        target_x, target_y = self.grid_to_world(grid_x, grid_y)
+
+                        # Diferença para o alvo
+                        dx = target_x - self.robot_x
+                        dy = target_y - self.robot_y
+                        dist = np.hypot(dx, dy)
+                        angulo_alvo = np.arctan2(dy, dx)
+                        erro_ang = angulo_alvo - self.robot_yaw
+
+                        # Normaliza ângulo para [-pi, pi]
+                        erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
+
+                        if dist <= 0.08:  # Se já chegou na célula alvo
+                            self.get_logger().warn(f'indice: {self.index_alvo}')
+                            self.index_alvo = self.index_alvo + 1
+                        else:
+                            twist.linear.x = 0.2
+                            twist.angular.z = 0.5 * erro_ang
+
+            case "Parado":
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0
 
 
         self.cmd_vel_pub.publish(twist)
