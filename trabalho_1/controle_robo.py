@@ -37,9 +37,9 @@ class ControleRobo(Node):
         self.create_subscription(Pose, '/model/prm_robot/pose', self.pose_callback, 10)
 
         # Espera o robô carregar
-        time.sleep(2)
         # Levanta a garra no início do programa
-        # self.levanta_garra()
+        time.sleep(2)
+        self.levanta_garra()
 
         # Timer para enviar comandos continuamente
         self.timer = self.create_timer(0.1, self.move_robot)
@@ -115,20 +115,22 @@ class ControleRobo(Node):
         # Para checar obstáculo à frente:
         indices_frente = list(range(330, 360)) + list(range(0, 31))
         
-        distancias = [msg.ranges[i] for i in indices_frente if (not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra)]
+        distancias_frente = [msg.ranges[i] for i in indices_frente if (not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra)]
 
-        if distancias and (min(distancias) < self.dist_obstaculo): # identifica obstaculo ignorando a garra
-            indice = distancias.index(min(distancias))
+        if distancias_frente and (min(distancias_frente) < self.dist_obstaculo): # identifica obstaculo ignorando a garra
+            indice = distancias_frente.index(min(distancias_frente))
             self.dir = "Direita" if indice <= 30 else "Esquerda"
             self.obstaculo_a_frente = True
-            self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(min(distancias)) + f', na {self.dir}')
+            self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(min(distancias_frente)) + f', na {self.dir}')
         else:
             self.get_logger().info('Sem obstáculo')
             self.obstaculo_a_frente = False
 
         #  mapeando obstáculos no grid
         angle = msg.angle_min
-        for i, dist in enumerate(msg.ranges):
+        distancias = [d if (d > self.dist_garra) else float('inf') for d in msg.ranges]
+
+        for i, dist in enumerate(distancias):
             if np.isnan(dist) or dist == float('inf'):
                 angle += msg.angle_increment
                 continue
