@@ -7,12 +7,14 @@ from rclpy.node import Node
 
 from cv_bridge import CvBridge
 import heapq
+from scipy.spatial.transform import Rotation as R
 
 
 from sensor_msgs.msg import LaserScan, Imu, Image
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Twist, Pose
 from tf_transformations import euler_from_quaternion
+from std_msgs.msg import Float64MultiArray
 
 
 class ControleRobo(Node):
@@ -25,6 +27,7 @@ class ControleRobo(Node):
 
         # Publisher para comando de velocidade
         self.cmd_vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.gripper_pub = self.create_publisher(Float64MultiArray, '/gripper_controller/commands', 10)
 
         # Subscribers
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
@@ -33,15 +36,22 @@ class ControleRobo(Node):
         self.create_subscription(Image, '/robot_cam/colored_map', self.camera_callback, 10)
         self.create_subscription(Pose, '/model/prm_robot/pose', self.pose_callback, 10)
 
+        # Espera o robô carregar
+        time.sleep(3)
+        # Levanta a garra no início do programa
+        self.levanta_garra()
+
         # Timer para enviar comandos continuamente
         self.timer = self.create_timer(0.1, self.move_robot)
 
         # Variáveis gerais
         self.bridge = CvBridge()            # Ponte entre a imagem ROS e OpenCv
-        self.giro_inicio = 0.0              # Tempo de início do giro
+        self.yaw_ant = 0                    # Ângulo antes do giro
         self.dir = "Direita"                # Direção do giro
         self.kp = 0.005                     # Ganho proporcional
         self.error = 0.0                    # Erro direcional
+        self.dist_garra  = 0.3              # Distancia máxima para identificar como garra
+        self.dist_obstaculo  = 0.6          # Distancia mínima para obstáculo identificado
 
         # Estados
         self.state = "Busca"                # "Busca", "Giro_inicio", "Giro", "Giro_fim", 
@@ -68,6 +78,24 @@ class ControleRobo(Node):
         self.odom_received = False
         self.bandeira_posicoes = []
          
+
+    def levanta_garra(self):
+        self.get_logger().info('LEVANTANDO A GARRA\n')
+        command_gripper = Float64MultiArray()
+        command_gripper.data = [-(np.pi), -0.5, 0.5]
+
+        # Tempo inicial
+        inicio = self.get_clock().now()
+
+        # Envia o comando pelo tempo em 'duracao'
+        duracao = 5e9   # n segundos = n * 10^9 ns
+
+        while (self.get_clock().now() - inicio).nanoseconds < duracao:  
+            self.gripper_pub.publish(command_gripper)
+
+        self.get_logger().info('FINALIZA LEVANTAR A GARRA\n')
+        
+
     def is_in_map(self, grid_x, grid_y):
         return 0 <= grid_x < self.map_size and 0 <= grid_y < self.map_size
 
@@ -82,10 +110,11 @@ class ControleRobo(Node):
             return
 
         # Para checar obstáculo à frente:
-        indices_frente = list(range(340, 360)) + list(range(0, 21))
-        distancias = [msg.ranges[i] for i in indices_frente if not np.isnan(msg.ranges[i])]
+        indices_frente = list(range(330, 360)) + list(range(0, 31))
+        
+        distancias = [msg.ranges[i] for i in indices_frente if not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra]
 
-        if distancias and ((not self.state == "Seguir_Caminho" and min(distancias) < 0.45) or (self.state == "Seguir_Caminho" and min(distancias) < 0.45)):
+        if distancias and (min(distancias) < self.dist_obstaculo): # identifica obstaculo ignorando a garra
             indice = distancias.index(min(distancias))
             self.dir = "Direita" if indice <= 30 else "Esquerda"
             self.obstaculo_a_frente = True
@@ -127,7 +156,7 @@ class ControleRobo(Node):
             for x in range(self.map_size):
                 val = self.grid_map[y, x]
                 if not self.caminho_a_estrela == None and (x, y) in self.caminho_a_estrela:
-                    color = (0, 0, 255)  # Vermelho - caminhxo
+                    color = (0, 0, 255)  # Vermelho - caminho
                 elif val == 0.0:
                     color = (0, 0, 0)  # Preto - livre
                 elif val == 0.2:
@@ -155,20 +184,20 @@ class ControleRobo(Node):
 
     
     def imu_callback(self, msg: Imu):
-        # # Extraindo o quaternion da mensagemAdd commentMore actions
-        # orientation_q = msg.orientation
-        # quat = [
-        #     orientation_q.x,
-        #     orientation_q.y,
-        #     orientation_q.z,
-        #     orientation_q.w
-        # ]
+        # Extraindo o quaternion da mensagemAdd commentMore actions
+        orientation_q = msg.orientation
+        quat = [
+            orientation_q.x,
+            orientation_q.y,
+            orientation_q.z,
+            orientation_q.w
+        ]
 
-        # # Conversão para Euler usando SciPy
-        # r = R.from_quat(quat)
-        # roll, pitch, yaw = r.as_euler('xyz', degrees=True)
+        # Conversão para Euler usando SciPy
+        r = R.from_quat(quat)
+        roll, self.pitch, self.robot_yaw = r.as_euler('xyz', degrees=True)
 
-        # # Exibindo resultados
+        # Exibindo resultados
         # self.get_logger().info('IMU Data Received:')
         # self.get_logger().info(
         #     f'Orientation (Euler): Roll={roll:.2f}°, '
@@ -182,7 +211,7 @@ class ControleRobo(Node):
         #     f'Linear acceleration: [{msg.linear_acceleration.x:.2f}, '
         #     f'{msg.linear_acceleration.y:.2f}, {msg.linear_acceleration.z:.2f}] m/s²'
         # )
-        pass
+        # pass
 
     def odom_callback(self, msg: Odometry):
         # Mensagens de Odometria das rodas!
@@ -215,13 +244,13 @@ class ControleRobo(Node):
 
         # Verifica se a bandeira foi identificada
         if contours:
-            self.get_logger().info(f'{len(contours)} blob(s) encontrados com cor #004239:')
+            # self.get_logger().info(f'{len(contours)} blob(s) encontrados com cor #004239:')
             for i, cnt in enumerate(contours):
                 M = cv2.moments(cnt)
                 if M['m00'] != 0:
                     cx = int(M['m10'] / M['m00'])       # Posição horizontal da bandeira
                     cy = int(M['m01'] / M['m00'])       # Posição vertical da bandeira
-                    self.get_logger().info(f'  Blob {i+1}: posição (x={cx}, y={cy})')
+                    # self.get_logger().info(f'  Blob {i+1}: posição (x={cx}, y={cy})')
                     self.error = cx - width / 2         # Cálculo do erro do giro
                     self.bandeira_identificada = True   # Atualizando a flag
 
@@ -253,7 +282,7 @@ class ControleRobo(Node):
                                         # Marca no grid a posição média
                                         if self.is_in_map(media_x, media_y):
                                             self.grid_map[media_y, media_x] = 0.75  # Marca bandeira na posição média
-                                            self.get_logger().info(f'Bandeira mapeada na média ({media_x}, {media_y})')
+                                            # self.get_logger().info(f'Bandeira mapeada na média ({media_x}, {media_y})')
                                             self.bandeira_x = media_x
                                             self.bandeira_y = media_y
                                             self.bandeira_mapeada = True
@@ -309,22 +338,23 @@ class ControleRobo(Node):
                 # Giro_início: atualiza a flag de giro e registra o valor do tempo de início
                 case "Giro_inicio":
                     self.giro = True
-                    self.giro_inicio = time.time()
+                    self.yaw_ant = self.robot_yaw
                     self.state = "Giro"
                 
                 # Giro: faz o robô girar para o lado que foi definido
                 case "Giro":
-                    twist.linear.x = 0.1
+                    twist.linear.x = 0.15
 
                     if self.dir == "Direita":
-                        twist.angular.z = 0.5
+                        twist.angular.z = 0.3
                     else:
-                        twist.angular.z = -0.5
+                        twist.angular.z = -0.3
 
-                    tempo_decorrido = time.time() - self.giro_inicio
-                    tempo_necessario = (np.pi / 4) / abs(twist.angular.z)
+                    angulo_decorrido = self.robot_yaw - self.yaw_ant
+                    # Giro do robô
+                    angulo_necessario = 20
 
-                    if tempo_decorrido >= tempo_necessario:
+                    if abs(angulo_decorrido) >= angulo_necessario:
                         self.giro = False
                         twist.angular.z = 0.0
                         self.state = "Giro_fim"
@@ -353,31 +383,31 @@ class ControleRobo(Node):
                 # Giro_início: atualiza a flag de giro e registra o valor do tempo de início
                 case "Giro_inicio":
                     self.giro = True
-                    self.giro_inicio = time.time()
+                    self.yaw_ant = self.robot_yaw
                     self.state = "Giro"
                 
                 # Giro: faz o robô girar para o lado que foi definido
                 case "Giro":
-                    # twist.linear.x = 0.1
+                    twist.linear.x = 0.15
 
                     if self.dir == "Direita":
                         twist.angular.z = 0.5
                     else:
                         twist.angular.z = -0.5
 
-                    tempo_decorrido = time.time() - self.giro_inicio
-                    tempo_necessario = (np.pi / 4) / abs(twist.angular.z)
+                    angulo_decorrido = self.robot_yaw - self.yaw_ant
+                    # Giro do robô
+                    angulo_necessario = 30
 
-                    if tempo_decorrido >= tempo_necessario:
+                    if angulo_decorrido >= angulo_necessario:
                         self.giro = False
                         twist.angular.z = 0.0
                         self.state = "Giro_fim"
                 
                 # Giro_fim: finaliza o giro
                 case "Giro_fim":
-                    
                     if not self.obstaculo_a_frente:
-                        if self.bandeira_mapeada:
+                        if (self.bandeira_mapeada):
                             self.flag_recalcular = True
                             self.state = "Seguir_Caminho"
                         else:
@@ -525,16 +555,16 @@ class ControleRobo(Node):
 
 
         # Log informativo
-        self.get_logger().info(
-            f'Pose recebida -> Posição: x={pos.x:.2f}, y={pos.y:.2f}, z={pos.z:.2f}, '
-            f'Orientação (quaternion): x={ori.x:.2f}, y={ori.y:.2f}, z={ori.z:.2f}, w={ori.w:.2f}, '
-            f'Yaw: {np.degrees(self.robot_yaw):.2f}°'
-        )
+        # self.get_logger().info(
+        #     f'Pose recebida -> Posição: x={pos.x:.2f}, y={pos.y:.2f}, z={pos.z:.2f}, '
+        #     f'Orientação (quaternion): x={ori.x:.2f}, y={ori.y:.2f}, z={ori.z:.2f}, w={ori.w:.2f}, '
+        #     f'Yaw: {np.degrees(self.robot_yaw):.2f}°'
+        # )
         if not self.pos_inicial_salva:
             self.robot_init_x = self.robot_x
             self.robot_init_y = self.robot_y
             self.pos_inicial_salva = True
-            self.get_logger().info(f'Posição inicial salva: ({self.robot_init_x:.2f}, {self.robot_init_y:.2f})')
+            # self.get_logger().info(f'Posição inicial salva: ({self.robot_init_x:.2f}, {self.robot_init_y:.2f})')
 
         if self.pos_inicial_salva:
             init_grid_x, init_grid_y = self.world_to_grid(self.robot_init_x, self.robot_init_y)
@@ -600,6 +630,7 @@ class ControleRobo(Node):
         
         return None  # Caminho não encontrado
   
+
 
 def main(args=None):
     rclpy.init(args=args)
