@@ -37,9 +37,9 @@ class ControleRobo(Node):
         self.create_subscription(Pose, '/model/prm_robot/pose', self.pose_callback, 10)
 
         # Espera o robô carregar
-        time.sleep(3)
+        time.sleep(2)
         # Levanta a garra no início do programa
-        self.levanta_garra()
+        # self.levanta_garra()
 
         # Timer para enviar comandos continuamente
         self.timer = self.create_timer(0.1, self.move_robot)
@@ -51,9 +51,10 @@ class ControleRobo(Node):
         self.kp = 0.005                     # Ganho proporcional
         self.error = 0.0                    # Erro direcional
 
-        self.dist_garra  = 0.4              # Distancia máxima para identificar como garra
+        self.dist_garra  = 0.5              # Distancia máxima para identificar como garra
         self.dist_obstaculo  = 0.6          # Distancia mínima para obstáculo identificado
         self.angulo_necessario = 40         # Giro do robô
+        self.giro_inicio = 0
 
         # Estados
         self.state = "Busca"                # "Busca", "Giro_inicio", "Giro", "Giro_fim", 
@@ -360,7 +361,7 @@ class ControleRobo(Node):
                     twist.linear.x = -0.2
                     self.cmd_vel_pub.publish(twist)
 
-                self.yaw_ant = self.robot_yaw
+                self.giro_inicio = time.time()
                 self.state = "Giro"
 
             # Giro: faz o robô girar para o lado que foi definido
@@ -372,13 +373,12 @@ class ControleRobo(Node):
                 else:
                     twist.angular.z = -0.3
 
-                # self.get_logger().info(f'angulo anterior: {self.yaw_ant}, angulo atual: {self.robot_yaw}')
-                # angulo_decorrido = self.robot_yaw - self.yaw_ant
-                angulo_decorrido = self.angulo_delta(self.robot_yaw, self.yaw_ant)
+                tempo_decorrido = time.time() - self.giro_inicio
+                tempo_necessario =  np.radians(self.angulo_necessario)/ abs(twist.angular.z)
+
 
                 # Terminou o primeiro giro
-                if abs(angulo_decorrido) >= self.angulo_necessario:
-                    self.get_logger().info(f'angulo decorrido: {angulo_decorrido}')
+                if tempo_decorrido >= tempo_necessario:
                     self.get_logger().info("Fim do Giro")
 
                     twist.angular.z = 0.0
@@ -393,7 +393,7 @@ class ControleRobo(Node):
                             self.state = "Busca"
                     else:
                         # Se ainda há obstáculo, atualiza o ângulo de referência com o atual e continua no giro
-                        self.yaw_ant = self.robot_yaw
+                        self.giro_inicio = time.time()
                         self.state = "Giro"
         
             # Busca: anda para frente até encontrar um obstáculo ou a bandeira
