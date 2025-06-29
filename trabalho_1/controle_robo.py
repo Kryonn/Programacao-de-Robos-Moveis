@@ -31,7 +31,7 @@ class ControleRobo(Node):
 
         # Subscribers
         self.create_subscription(LaserScan, '/scan', self.scan_callback, 10)
-        self.create_subscription(Imu, '/imu', self.imu_callback, 10)
+        # self.create_subscription(Imu, '/imu', self.imu_callback, 10)
         self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.create_subscription(Image, '/robot_cam/colored_map', self.camera_callback, 10)
         self.create_subscription(Pose, '/model/prm_robot/pose', self.pose_callback, 10)
@@ -80,6 +80,7 @@ class ControleRobo(Node):
         self.flag_recalcular = False
         self.odom_received = False
         self.bandeira_posicoes = []
+        # self.contador = 0
          
 
     def levanta_garra(self):
@@ -176,7 +177,7 @@ class ControleRobo(Node):
                 elif val == 0.9:
                     color = (255, 0, 0)  # Azul - posição inicial
                 elif val == 0.95:
-                    color = (255, 255, 0)  # Amarelo - zona inflada
+                    color = (255, 255, 0)  # Azul claro - zona inflada
                 else:
                     color = (50, 50, 50)  # Default (livre escuro)
 
@@ -189,21 +190,21 @@ class ControleRobo(Node):
         cv2.waitKey(1)
 
     
-    def imu_callback(self, msg: Imu):
+    # def imu_callback(self, msg: Imu):
         # Extraindo o quaternion da mensagemAdd commentMore actions
-        orientation_q = msg.orientation
-        quat = [
-            orientation_q.x,
-            orientation_q.y,
-            orientation_q.z,
-            orientation_q.w
-        ]
+        # orientation_q = msg.orientation
+        # quat = [
+        #     orientation_q.x,
+        #     orientation_q.y,
+        #     orientation_q.z,
+        #     orientation_q.w
+        # ]
 
-        # Conversão para Euler usando SciPy
-        r = R.from_quat(quat)
-        roll, self.pitch, yaw = r.as_euler('xyz', degrees=True)
+        # # Conversão para Euler usando SciPy
+        # r = R.from_quat(quat)
+        # roll, self.pitch, self.robot_yaw = r.as_euler('xyz', degrees=True)
 
-        self.robot_yaw = (yaw + 360) % 360
+        # self.robot_yaw = (yaw + 360) % 360
 
 
         # Exibindo resultados
@@ -349,6 +350,8 @@ class ControleRobo(Node):
     def move_robot(self):
         twist = Twist()
         self.get_logger().info(f'{self.state}') # imprime o estado atual do robô
+        
+        # self.contador += 1
 
         # Transição dos estados
         match self.state:
@@ -394,12 +397,16 @@ class ControleRobo(Node):
                         else:
                             self.state = "Busca"
                     else:
-                        # Se ainda há obstáculo, atualiza o ângulo de referência com o atual e continua no giro
+                        # Se ainda há obstáculo, atualiza o tempo de inicio e continua no giro
                         self.giro_inicio = time.time()
                         self.state = "Giro"
         
             # Busca: anda para frente até encontrar um obstáculo ou a bandeira
             case "Busca":
+                # [DEBUG] espera um pouco para simular a bandeira
+                # if self.contador >= 10:
+                #     self.simular_bandeira = True
+
                 twist.linear.x = 0.2
                 if self.obstaculo_a_frente:
                     self.state = "Afasta"
@@ -425,6 +432,7 @@ class ControleRobo(Node):
                     self.state = "Afasta"
 
             case "Planejar_Caminho":
+                time.sleep(3)
                 if self.bandeira_mapeada:
                     self.flag_recalcular = False
                     self.caminho_a_estrela = self.planejar_caminho_astar()
@@ -447,8 +455,11 @@ class ControleRobo(Node):
                     self.get_logger().info("Chegou à bandeira!")
                     self.state = "Parado"
                 else:
+                    if self.obstaculo_a_frente:
+                        self.state = "Giro"
+
                     # flag que indica a necessidade de recalcular o caminho
-                    if self.flag_recalcular:
+                    elif self.flag_recalcular:
                         self.get_logger().warn("Recalculando caminho.")
                         self.state = "Planejar_Caminho"
                     else:
@@ -466,12 +477,17 @@ class ControleRobo(Node):
                         # Normaliza ângulo para [-pi, pi]
                         erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
 
-                        if dist <= 0.08:  # Se já chegou na célula alvo
-                            self.get_logger().warn(f'indice: {self.index_alvo}')
-                            self.index_alvo = self.index_alvo + 1
+                        if dist <= 0.15:  # Se já chegou na célula alvo
+                            self.get_logger().warn(f'indice alcançado: {self.index_alvo}')
+                            self.grid_map[grid_x, grid_y] = 0.0
+                            self.index_alvo += 1
                         else:
-                            twist.linear.x = 0.2
-                            twist.angular.z = 0.5 * erro_ang
+                            if abs(erro_ang) > 0.15:  # ainda precisa alinhar
+                                twist.linear.x = 0.0
+                                twist.angular.z = 0.5 * erro_ang  # gira até alinhar
+                            else:
+                                twist.linear.x = 0.2
+                                twist.angular.z = 0.0  # vai reto
 
             case "Parado":
                 twist.linear.x = 0.0
@@ -487,10 +503,11 @@ class ControleRobo(Node):
         start = (atual_x, atual_y)
         goal = (self.bandeira_x, self.bandeira_y)
         inflated_grid_for_astar = self.inflate_map(self.grid_map, 3)
-        # self.grid_map = inflated_grid_for_astar # debug
+        self.grid_map = inflated_grid_for_astar # debug
+
         caminho = self.a_star(inflated_grid_for_astar, start, goal)
         if not caminho == None:
-            return [x for i,x in enumerate(caminho) if i%2 == 0][3:] #ignora os primeiros pixels para não entrar em loop de recalcular sem se mover
+            return [x for i,x in enumerate(caminho) if i%3 == 0][2:] #ignora os primeiros pixels para não entrar em loop de recalcular sem se mover
         else:
             return None
 
@@ -522,7 +539,7 @@ class ControleRobo(Node):
 
                     if 0 <= nr < rows and 0 <= nc < cols:
                         if inflated_grid[nr, nc] == 0.0:
-                            inflated_grid[nr, nc] = 1.0  # Marca a célula inflada como semi-obstáculo (0.95)
+                            inflated_grid[nr, nc] = 0.95  # Marca a célula inflada como semi-obstáculo (0.95)
 
         return inflated_grid
 
@@ -605,7 +622,8 @@ class ControleRobo(Node):
                     continue
                     
                 # Verifica se não é obstáculo (0 = livre, 1 = obstáculo)
-                if grid[neighbor[0], neighbor[1]] == 1.0 :
+                x, y = neighbor
+                if grid[y, x] >= 0.95:
                     continue
                     
                 # Calcula custo temporário
