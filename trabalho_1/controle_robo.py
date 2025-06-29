@@ -55,7 +55,7 @@ class ControleRobo(Node):
         self.dist_obstaculo  = 0.6          # Distancia mínima para obstáculo identificado
         self.angulo_necessario = 40         # Giro do robô
         self.giro_inicio = 0
-
+        self.frontal_scan_angle_deg = 15 
         # Estados
         self.state = "Busca"                # "Busca", "Giro_inicio", "Giro", "Giro_fim", 
                                             # "Alinha_bandeira", "Andar_bandeira".
@@ -68,7 +68,7 @@ class ControleRobo(Node):
         self.map_size = 200  # Ex: 200x200 células
         self.resolution = 0.1  # Cada célula = 10 cm
         self.grid_map = np.zeros((self.map_size, self.map_size))
-        self.simular_bandeira = False
+        self.simular_bandeira = True
         self.robot_x = 0.0
         self.robot_y = 0.0
         self.robot_yaw = 0.0
@@ -114,24 +114,36 @@ class ControleRobo(Node):
             return
 
         # Para checar obstáculo à frente:
-        indices_frente = list(range(330, 360)) + list(range(0, 31))
-        
-        distancias_frente = [msg.ranges[i] for i in indices_frente if (not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra)]
+        angle_deg_cada_lado = self.frontal_scan_angle_deg
+        indices_frente = list(range(360 - angle_deg_cada_lado, 360)) + list(range(0, angle_deg_cada_lado + 1))
+       
+        leituras_validas = [
+            (msg.ranges[i], i) for i in indices_frente 
+            if not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra
+        ]
 
-        if distancias_frente and (min(distancias_frente) < self.dist_obstaculo): # identifica obstaculo ignorando a garra
-            indice = distancias_frente.index(min(distancias_frente))
-            self.dir = "Direita" if indice <= 30 else "Esquerda"
-            self.obstaculo_a_frente = True
-            self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(min(distancias_frente)) + f', na {self.dir}')
+        if leituras_validas:
+            # Encontra a leitura com a menor distância dentro do cone
+            menor_distancia, indice_original = min(leituras_validas, key=lambda item: item[0])
+
+            if menor_distancia < self.dist_obstaculo:
+                self.obstaculo_a_frente = True
+                
+                self.dir = "Direita" if 0 <= indice_original <= angle_deg_cada_lado else "Esquerda"
+                
+                self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(menor_distancia) + f', na {self.dir}')
+            else:
+                self.obstaculo_a_frente = False
         else:
-            self.get_logger().info('Sem obstáculo')
             self.obstaculo_a_frente = False
+
+        distancias_frente = [msg.ranges[i] for i in indices_frente if (not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra)]
 
         #  mapeando obstáculos no grid
         angle = msg.angle_min
         distancias = [d if (d > self.dist_garra) else float('inf') for d in msg.ranges]
 
-        for i, dist in enumerate(distancias):
+        for dist in distancias:
             if np.isnan(dist) or dist == float('inf'):
                 angle += msg.angle_increment
                 continue
@@ -310,7 +322,7 @@ class ControleRobo(Node):
         """
 
         # Calcula a posição global da bandeira
-        bandeira_x = 1.8
+        bandeira_x = 0
         bandeira_y = 0
 
         # Converte para grid
@@ -456,7 +468,7 @@ class ControleRobo(Node):
                     self.state = "Parado"
                 else:
                     if self.obstaculo_a_frente:
-                        self.state = "Giro"
+                        self.state = "Afasta"
 
                     # flag que indica a necessidade de recalcular o caminho
                     elif self.flag_recalcular:
@@ -477,17 +489,18 @@ class ControleRobo(Node):
                         # Normaliza ângulo para [-pi, pi]
                         erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
 
-                        if dist <= 0.15:  # Se já chegou na célula alvo
+                        if dist <= 0.35:  # Se já chegou na célula alvo
                             self.get_logger().warn(f'indice alcançado: {self.index_alvo}')
                             self.grid_map[grid_x, grid_y] = 0.0
                             self.index_alvo += 1
                         else:
-                            if abs(erro_ang) > 0.15:  # ainda precisa alinhar
-                                twist.linear.x = 0.0
-                                twist.angular.z = 0.5 * erro_ang  # gira até alinhar
-                            else:
-                                twist.linear.x = 0.2
-                                twist.angular.z = 0.0  # vai reto
+                             # Controlador de perseguição suave (anda e gira ao mesmo tempo)
+                            angulo_alvo = np.arctan2(dy, dx)
+                            erro_ang = angulo_alvo - self.robot_yaw
+                            erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang)) # Normaliza
+
+                            twist.linear.x = 0.25  # Velocidade moderada e constante
+                            twist.angular.z = 0.7 * erro_ang # Velocidade angular proporcional ao erro
 
             case "Parado":
                 twist.linear.x = 0.0
@@ -582,8 +595,6 @@ class ControleRobo(Node):
                 self.grid_map[init_grid_y, init_grid_x] = 0.9
 
         self.odom_received = True
-
-    
 
     def a_star(self, grid, start, goal):
         def heuristic(a, b):
