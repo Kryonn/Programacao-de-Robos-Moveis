@@ -65,7 +65,7 @@ class ControleRobo(Node):
         self.bandeira_identificada = False  # Condição de busca da bandeira
         self.obstaculo_a_frente = False     # Condição de giro
         
-        self.map_size = 100  # Ex: 200x200 células
+        self.map_size = 200  # Ex: 200x200 células
         self.resolution = 0.1  # Cada célula = 10 cm
         self.grid_map = np.zeros((self.map_size, self.map_size))
         self.simular_bandeira = False
@@ -184,7 +184,7 @@ class ControleRobo(Node):
                 grid_img[y, x] = color
 
         # Redimensiona para visualizar melhor
-        grid_img = cv2.resize(grid_img, (800, 800), interpolation=cv2.INTER_NEAREST)
+        grid_img = cv2.resize(grid_img, (1200, 800), interpolation=cv2.INTER_NEAREST)
 
         cv2.imshow('Mapa Colorido do Grid', grid_img)
         cv2.waitKey(1)
@@ -237,7 +237,7 @@ class ControleRobo(Node):
         height, width, _ = frame.shape
 
         # Define a cor-alvo em BGR
-        target_color = np.array([57, 66, 0])  # [57, 66, 0] é o BGR da bandeira(verde escuro)
+        target_color = np.array([227, 73, 0])  # [57, 66, 0] é o BGR da bandeira(verde escuro)
 
         # Cria máscara para cor exata
         mask = cv2.inRange(frame, target_color, target_color)
@@ -264,7 +264,7 @@ class ControleRobo(Node):
                     self.error = cx - width / 2         # Cálculo do erro do giro
                     self.bandeira_identificada = True   # Atualizando a flag
 
-                     # Quando a bandeira estiver centralizada
+                    # Quando a bandeira estiver centralizada
                     if abs(self.error) < 5 and not self.bandeira_mapeada:  # Limiar ajustável (em pixels)
                         if self.ultima_scan is not None:
                             # Pega a distância à frente (ângulo 0°)
@@ -407,7 +407,7 @@ class ControleRobo(Node):
                 # if self.contador >= 10:
                 #     self.simular_bandeira = True
 
-                twist.linear.x = 0.2
+                twist.linear.x = 0.5
                 if self.obstaculo_a_frente:
                     self.state = "Afasta"
 
@@ -502,7 +502,7 @@ class ControleRobo(Node):
         atual_x, atual_y = self.world_to_grid(self.robot_x, self.robot_y)
         start = (atual_x, atual_y)
         goal = (self.bandeira_x, self.bandeira_y)
-        inflated_grid_for_astar = self.inflate_map(self.grid_map, 3)
+        inflated_grid_for_astar = self.inflate_map(self.grid_map, 2)
         self.grid_map = inflated_grid_for_astar # debug
 
         caminho = self.a_star(inflated_grid_for_astar, start, goal)
