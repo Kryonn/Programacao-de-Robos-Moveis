@@ -51,6 +51,7 @@ class ControleRobo(Node):
         self.kp = 0.005                     # Ganho proporcional
         self.error = 0.0                    # Erro direcional
 
+        self.alinhamento_grosso_concluido = False
         self.dist_garra  = 0.5              # Distancia máxima para identificar como garra
         self.dist_obstaculo  = 0.6          # Distancia mínima para obstáculo identificado
         self.angulo_necessario = 40         # Giro do robô
@@ -95,7 +96,7 @@ class ControleRobo(Node):
          
         # Limiar para área de blob
         self.min_blob_area = 70  # Área mínima para considerar um blob de bandeira (já existente)
-        self.max_blob_area = 5000 # Área máxima para considerar bandeira "muito próxima" - AJUSTAR ESSE VALOR SE NECESSÁRIO
+        self.max_blob_area = 16000 # Área máxima para considerar bandeira "muito próxima" - AJUSTAR ESSE VALOR SE NECESSÁRIO
 
          
     def controlar_garra(self, posicoes, duracao_ns=2e9):
@@ -277,7 +278,7 @@ class ControleRobo(Node):
                             self.bandeira_y = grid_y_proxima
                             self.grid_map[self.bandeira_y, self.bandeira_x] = 0.75 # Marca bandeira no grid
                             self.bandeira_mapeada = True
-                            self.state = "Planejar_Caminho" # Planeja o caminho para a posição "próxima"
+                            self.state = "Capturar_Bandeira" # Planeja o caminho para a posição "próxima"
                         return
                 M = cv2.moments(cnt)
                 if M['m00'] != 0:
@@ -621,83 +622,92 @@ class ControleRobo(Node):
                 twist.angular.z = 0.0
 
             case "Aproximacao_Final_Bandeira":
-                # Distâncias de Alvo
+                # --- 1. Parâmetros de Controle (Ajuste estes valores para o seu robô) ---
                 DISTANCIA_ALVO_LIDAR = 0.40      # Distância ideal do LIDAR para a captura (40cm)
-                # Tolerância de Alinhamento
-                ANGULO_ALINHADO_RAD = np.deg2rad(2)  # Tolerância mais apertada (2 graus) para o alinhamento final
-                # Ganhos do Controlador Proporcional (KP)
-                KP_ANGULAR = 0.7               # Ganho do controlador de ângulo (quão rápido ele vira)
-                KP_LINEAR = 0.8                # Ganho do controlador de distância (quão rápido ele anda)
-                
-                # Limites de Segurança para as Velocidades
+                ANGULO_ALINHADO_RAD = np.deg2rad(2)  # Tolerância para considerar o robô alinhado (2 graus)
+                KP_ANGULAR = 0.7               # Ganho do controlador de ângulo
+                KP_LINEAR = 0.8                # Ganho do controlador de distância
                 MAX_VEL_ANGULAR = 0.3          # Velocidade máxima de giro (rad/s)
-                MAX_VEL_LINEAR = 0.15          # Velocidade máxima de avanço (m/s)
+                MAX_VEL_LINEAR = 0.35          # Velocidade máxima de avanço (m/s)
 
-                # --- 2. Lógica Principal ---
-                
-                # --- 2a. Verificações de Segurança ---
-                if not self.ultima_scan:
+                # --- 2. Verificações de Segurança ---
+                if not self.ultima_scan or not self.caminho_a_estrela:
                     twist.linear.x = 0.0
                     twist.angular.z = 0.0
-                    self.get_logger().warn("Aproximação final: Sem dados do LIDAR.")
-                    return # Usar return aqui para simplificar a estrutura do if/else
-
-                if not self.caminho_a_estrela:
-                    twist.linear.x = 0.0
-                    twist.angular.z = 0.0
-                    self.get_logger().error("Aproximação final: Sem caminho A* para seguir.")
-                    self.state = "Planejar_Caminho" # Volta a planejar
+                    self.get_logger().error("Aproximação final: Faltam dados do LIDAR ou do caminho A*.")
+                    self.state = "Planejar_Caminho"
+                    self.alinhamento_grosso_concluido = False # Reseta a flag ao sair
                     return
 
-                # --- 2b. Lógica de Controle "Gire e Depois Ande" ---
-                
-                # NOVO: O alvo do ângulo agora é o último ponto do caminho A*
-                ultimo_ponto_grid = self.caminho_a_estrela[-1]
-                target_world_x, target_world_y = self.grid_to_world(ultimo_ponto_grid[0], ultimo_ponto_grid[1])
-                
-                # Calcula o erro angular em relação ao alvo do MAPA
-                dx_mapa = target_world_x - self.robot_x
-                dy_mapa = target_world_y - self.robot_y
-                angulo_alvo_mapa = np.arctan2(dy_mapa, dx_mapa)
-                
-                angulo_erro_rad = angulo_alvo_mapa - self.robot_yaw
-                angulo_erro_rad = np.arctan2(np.sin(angulo_erro_rad), np.cos(angulo_erro_rad)) # Normaliza
+                # --- 3. Lógica de Alinhamento em Duas Fases ---
 
-                # ETAPA DE ALINHAMENTO: Se o robô NÃO está alinhado com o alvo do mapa...
-                if abs(angulo_erro_rad) > ANGULO_ALINHADO_RAD:
-                    # ...então APENAS GIRE. Não ande para frente.
-                    self.get_logger().info(f"Alinhando com o alvo do mapa... Erro de {np.rad2deg(angulo_erro_rad):.1f}°")
-                    twist.linear.x = 0.0
-                    twist.angular.z = KP_ANGULAR * angulo_erro_rad
-                    twist.angular.z = np.clip(twist.angular.z, -MAX_VEL_ANGULAR, MAX_VEL_ANGULAR)
-                
-                # ETAPA DE APROXIMAÇÃO: Se o robô JÁ está alinhado...
-                else:
-                    # ...então pare de girar e controle a distância com o LIDAR.
-                    self.get_logger().info("Robô alinhado. Verificando distância com LIDAR...")
-                    twist.angular.z = 0.0
+                # FASE 1: Alinhamento Grosso com o Mapa (A*)
+                if not self.alinhamento_grosso_concluido:
+                    self.get_logger().info("FASE 1: Alinhamento com o alvo do mapa...")
                     
-                    # Usa o LIDAR para encontrar a distância real até o objeto à frente
-                    indices_frente = list(range(355, 360)) + list(range(0, 6))
-                    distancias_frente = [self.ultima_scan.ranges[i] for i in indices_frente if not np.isnan(self.ultima_scan.ranges[i]) and self.ultima_scan.ranges[i] > 0.1]
+                    ultimo_ponto_grid = self.caminho_a_estrela[-1]
+                    target_world_x, target_world_y = self.grid_to_world(ultimo_ponto_grid[0], ultimo_ponto_grid[1])
                     
-                    if not distancias_frente:
+                    dx_mapa = target_world_x - self.robot_x
+                    dy_mapa = target_world_y - self.robot_y
+                    angulo_alvo_mapa = np.arctan2(dy_mapa, dx_mapa)
+                    
+                    angulo_erro_rad = angulo_alvo_mapa - self.robot_yaw
+                    angulo_erro_rad = np.arctan2(np.sin(angulo_erro_rad), np.cos(angulo_erro_rad))
+
+                    # Se o alinhamento com o mapa ainda não está bom, continue girando
+                    if abs(angulo_erro_rad) > ANGULO_ALINHADO_RAD:
                         twist.linear.x = 0.0
-                        self.get_logger().warn("Alinhado, mas sem detecção LIDAR à frente.")
+                        twist.angular.z = np.clip(KP_ANGULAR * angulo_erro_rad, -MAX_VEL_ANGULAR, MAX_VEL_ANGULAR)
                     else:
-                        dist_lidar = min(distancias_frente)
-                        erro_dist_lidar = dist_lidar - DISTANCIA_ALVO_LIDAR
-                        self.get_logger().info(f"Distância LIDAR: {dist_lidar:.2f}m. Erro: {erro_dist_lidar:.2f}m")
+                        # Alinhamento grosso concluído! Mude a flag para passar para a próxima fase.
+                        self.get_logger().info("FASE 1 CONCLUÍDA. Passando para a FASE 2 (Alinhamento fino com LIDAR).")
+                        self.alinhamento_grosso_concluido = True
+                        twist.angular.z = 0.0 # Para o robô por um instante antes de começar a próxima fase
+                
+                # FASE 2: Alinhamento Fino com LIDAR e Aproximação Final
+                else:
+                    self.get_logger().info("FASE 2: Alinhamento fino com LIDAR e aproximação...")
+                    
+                    # Encontra o ponto mais próximo no LIDAR para o alinhamento fino
+                    indices_frente = list(range(355, 360)) + list(range(0, 6))
+                    min_dist = float('inf')
+                    min_dist_index = -1
+                    for i in indices_frente:
+                        dist = self.ultima_scan.ranges[i]
+                        if not np.isinf(dist) and not np.isnan(dist) and dist > 0.1:
+                            if dist < min_dist:
+                                min_dist = dist
+                                min_dist_index = i
+                    
+                    if min_dist_index == -1:
+                        self.get_logger().warn("FASE 2: Nenhum alvo detectado pelo LIDAR para alinhamento fino.")
+                        twist.linear.x = 0.0
+                        twist.angular.z = 0.0
+                    else:
+                        # Calcula o erro angular em relação ao ponto mais próximo do LIDAR
+                        angulo_erro_graus = min_dist_index - 360 if min_dist_index > 180 else min_dist_index
+                        angulo_erro_rad_lidar = np.deg2rad(angulo_erro_graus)
                         
-                        # Condição de captura (apenas baseada em LIDAR, pois já estamos alinhados)
-                        if abs(erro_dist_lidar) < 0.05: # Se o erro de distância for menor que 5cm
-                            self.get_logger().info("Distância de captura alcançada! Preparando para capturar.")
+                        # Se o alinhamento fino ainda não está bom, continue girando
+                        if abs(angulo_erro_rad_lidar) > ANGULO_ALINHADO_RAD:
+                            self.get_logger().info(f"Ajustando ângulo com LIDAR... Erro de {angulo_erro_graus:.1f}°")
                             twist.linear.x = 0.0
-                            self.state = "Capturar_Bandeira"
+                            twist.angular.z = np.clip(KP_ANGULAR * angulo_erro_rad_lidar, -MAX_VEL_ANGULAR, MAX_VEL_ANGULAR)
                         else:
-                            # Se não chegou, continua a aproximação em linha reta
-                            twist.linear.x = KP_LINEAR * erro_dist_lidar
-                            twist.linear.x = np.clip(twist.linear.x, 0.0, MAX_VEL_LINEAR)
+                            # Alinhamento fino concluído! Agora, controle a distância.
+                            self.get_logger().info("Alinhamento fino concluído. Controlando distância...")
+                            twist.angular.z = 0.0
+                            
+                            erro_dist_lidar = min_dist - DISTANCIA_ALVO_LIDAR
+                            
+                            if abs(erro_dist_lidar) < 0.05:
+                                self.get_logger().info("Distância de captura alcançada! Preparando para capturar.")
+                                twist.linear.x = 0.0
+                                self.state = "Capturar_Bandeira"
+                                self.alinhamento_grosso_concluido = False # Reseta a flag para a próxima vez
+                            else:
+                                twist.linear.x = np.clip(KP_LINEAR * erro_dist_lidar, 0.0, MAX_VEL_LINEAR)
 
             case "Capturar_Bandeira":
                 if self.sub_state_garra == "ocioso":
