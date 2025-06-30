@@ -78,6 +78,8 @@ class ControleRobo(Node):
         self.pos_inicial_salva = False
         self.robot_init_x = 0.0
         self.robot_init_y = 0.0
+        self.bandeira_world_x = 0.0
+        self.bandeira_world_y = 0.0
         self.ultima_scan = None
         self.bandeira_mapeada = False
         self.flag_recalcular = False
@@ -273,6 +275,7 @@ class ControleRobo(Node):
                                             # self.get_logger().info(f'Bandeira mapeada na média ({media_x}, {media_y})')
                                             self.bandeira_x = media_x
                                             self.bandeira_y = media_y
+                                            self.bandeira_world_x, self.bandeira_world_y = self.grid_to_world(media_x, media_y)
                                             self.bandeira_mapeada = True
                                             self.state = "Planejar_Caminho"
                             else:
@@ -311,6 +314,9 @@ class ControleRobo(Node):
                 # Atualiza as variáveis de estado
                 self.bandeira_x = media_x
                 self.bandeira_y = media_y
+
+                self.bandeira_world_x, self.bandeira_world_y = self.grid_to_world(media_x, media_y)
+
                 self.bandeira_mapeada = True
                 self.state = "Planejar_Caminho"
 
@@ -429,8 +435,9 @@ class ControleRobo(Node):
                 if self.caminho_a_estrela == None:
                     self.state = "Planejar_Caminho"
 
-                elif self.index_alvo >= len(self.caminho_a_estrela) - 6:
+                elif self.index_alvo >= len(self.caminho_a_estrela) - 4:
                     self.get_logger().info("Chegou à bandeira!")
+                    self.controlar_garra([0.1, -0.5, 0.5])
                     self.state = "Aproximacao_Final_Bandeira"
                 elif self.obstaculo_a_frente:
                         self.state = "Afasta"
@@ -471,70 +478,83 @@ class ControleRobo(Node):
                 twist.angular.z = 0.0
 
             case "Aproximacao_Final_Bandeira":
-                DISTANCIA_ALVO = 0.40      # Distância ideal em metros para a captura (40cm)
-                ANGULO_ALINHADO_RAD = np.deg2rad(3) # Tolerância para considerar o robô alinhado (3 graus)
+                # Distâncias de Alvo
+                DISTANCIA_ALVO_LIDAR = 0.40      # Distância ideal do LIDAR para a captura (40cm)
+                # Tolerância de Alinhamento
+                ANGULO_ALINHADO_RAD = np.deg2rad(2)  # Tolerância mais apertada (2 graus) para o alinhamento final
+                # Ganhos do Controlador Proporcional (KP)
+                KP_ANGULAR = 0.7               # Ganho do controlador de ângulo (quão rápido ele vira)
+                KP_LINEAR = 0.8                # Ganho do controlador de distância (quão rápido ele anda)
                 
-                KP_ANGULAR = 0.7           # Ganho do controlador de ângulo (quão rápido ele vira)
-                KP_LINEAR = 0.6            # Ganho do controlador de distância (quão rápido ele anda)
-                
-                MAX_VEL_ANGULAR = 0.3      # Velocidade máxima de giro (rad/s)
-                MAX_VEL_LINEAR = 0.15      # Velocidade máxima de avanço (m/s)
+                # Limites de Segurança para as Velocidades
+                MAX_VEL_ANGULAR = 0.3          # Velocidade máxima de giro (rad/s)
+                MAX_VEL_LINEAR = 0.15          # Velocidade máxima de avanço (m/s)
 
                 # --- 2. Lógica Principal ---
+                
+                # --- 2a. Verificações de Segurança ---
                 if not self.ultima_scan:
-                    # Segurança: se não há dados do LIDAR, o robô para.
                     twist.linear.x = 0.0
                     twist.angular.z = 0.0
                     self.get_logger().warn("Aproximação final: Sem dados do LIDAR.")
+                    return # Usar return aqui para simplificar a estrutura do if/else
+
+                if not self.caminho_a_estrela:
+                    twist.linear.x = 0.0
+                    twist.angular.z = 0.0
+                    self.get_logger().error("Aproximação final: Sem caminho A* para seguir.")
+                    self.state = "Planejar_Caminho" # Volta a planejar
+                    return
+
+                # --- 2b. Lógica de Controle "Gire e Depois Ande" ---
+                
+                # NOVO: O alvo do ângulo agora é o último ponto do caminho A*
+                ultimo_ponto_grid = self.caminho_a_estrela[-1]
+                target_world_x, target_world_y = self.grid_to_world(ultimo_ponto_grid[0], ultimo_ponto_grid[1])
+                
+                # Calcula o erro angular em relação ao alvo do MAPA
+                dx_mapa = target_world_x - self.robot_x
+                dy_mapa = target_world_y - self.robot_y
+                angulo_alvo_mapa = np.arctan2(dy_mapa, dx_mapa)
+                
+                angulo_erro_rad = angulo_alvo_mapa - self.robot_yaw
+                angulo_erro_rad = np.arctan2(np.sin(angulo_erro_rad), np.cos(angulo_erro_rad)) # Normaliza
+
+                # ETAPA DE ALINHAMENTO: Se o robô NÃO está alinhado com o alvo do mapa...
+                if abs(angulo_erro_rad) > ANGULO_ALINHADO_RAD:
+                    # ...então APENAS GIRE. Não ande para frente.
+                    self.get_logger().info(f"Alinhando com o alvo do mapa... Erro de {np.rad2deg(angulo_erro_rad):.1f}°")
+                    twist.linear.x = 0.0
+                    twist.angular.z = KP_ANGULAR * angulo_erro_rad
+                    twist.angular.z = np.clip(twist.angular.z, -MAX_VEL_ANGULAR, MAX_VEL_ANGULAR)
+                
+                # ETAPA DE APROXIMAÇÃO: Se o robô JÁ está alinhado...
                 else:
-                    # --- 2a. Encontrar o Alvo ---
-                    indices_frente = list(range(355, 360)) + list(range(0, 6))
-                    min_dist = float('inf')
-                    min_dist_index = -1
-
-                    for i in indices_frente:
-                        dist = self.ultima_scan.ranges[i]
-                        if not np.isinf(dist) and not np.isnan(dist) and dist > 0.1:
-                            if dist < min_dist:
-                                min_dist = dist
-                                min_dist_index = i
+                    # ...então pare de girar e controle a distância com o LIDAR.
+                    self.get_logger().info("Robô alinhado. Verificando distância com LIDAR...")
+                    twist.angular.z = 0.0
                     
-                    # --- 2b. Lidar com a Não Detecção ---
-                    if min_dist_index == -1:
+                    # Usa o LIDAR para encontrar a distância real até o objeto à frente
+                    indices_frente = list(range(355, 360)) + list(range(0, 6))
+                    distancias_frente = [self.ultima_scan.ranges[i] for i in indices_frente if not np.isnan(self.ultima_scan.ranges[i]) and self.ultima_scan.ranges[i] > 0.1]
+                    
+                    if not distancias_frente:
                         twist.linear.x = 0.0
-                        twist.angular.z = 0.0
-                        self.get_logger().warn("Aproximação final: Nenhum alvo detectado na frente.")
+                        self.get_logger().warn("Alinhado, mas sem detecção LIDAR à frente.")
                     else:
-                        # --- 2c. Lógica de Controle "Gire e Depois Ande" ---
+                        dist_lidar = min(distancias_frente)
+                        erro_dist_lidar = dist_lidar - DISTANCIA_ALVO_LIDAR
+                        self.get_logger().info(f"Distância LIDAR: {dist_lidar:.2f}m. Erro: {erro_dist_lidar:.2f}m")
                         
-                        # Calcula o erro angular em relação ao ponto mais próximo
-                        if min_dist_index > 180:
-                            angulo_erro_graus = min_dist_index - 360
-                        else:
-                            angulo_erro_graus = min_dist_index
-                        angulo_erro_rad = np.deg2rad(angulo_erro_graus)
-
-                        if abs(angulo_erro_rad) > ANGULO_ALINHADO_RAD:
-                            # ...então APENAS GIRE. Não ande para frente.
-                            self.get_logger().info(f"Alinhando... Erro de {angulo_erro_graus:.1f}°")
+                        # Condição de captura (apenas baseada em LIDAR, pois já estamos alinhados)
+                        if abs(erro_dist_lidar) < 0.05: # Se o erro de distância for menor que 5cm
+                            self.get_logger().info("Distância de captura alcançada! Preparando para capturar.")
                             twist.linear.x = 0.0
-                            twist.angular.z = KP_ANGULAR * angulo_erro_rad
-                            twist.angular.z = np.clip(twist.angular.z, -MAX_VEL_ANGULAR, MAX_VEL_ANGULAR)
-                        
+                            self.state = "Capturar_Bandeira"
                         else:
-                            twist.angular.z = 0.0
-                            erro_dist = min_dist - DISTANCIA_ALVO
-                            
-                            # Verifica se já chegou no ponto de captura
-                            if erro_dist < 0.05: # Tolerância de 5cm
-                                self.get_logger().info("Alinhado e posicionado para captura!")
-                                twist.linear.x = 0.0
-                                self.state = "Capturar_Bandeira"
-                            else:
-                                # Se não chegou, continua a aproximação em linha reta
-                                self.get_logger().info(f"Aproximando em linha reta... Dist: {min_dist:.2f}m")
-                                twist.linear.x = KP_LINEAR * erro_dist
-                                twist.linear.x = np.clip(twist.linear.x, 0.0, MAX_VEL_LINEAR)
+                            # Se não chegou, continua a aproximação em linha reta
+                            twist.linear.x = KP_LINEAR * erro_dist_lidar
+                            twist.linear.x = np.clip(twist.linear.x, 0.0, MAX_VEL_LINEAR)
 
             case "Capturar_Bandeira":
                 if self.sub_state_garra == "ocioso":
@@ -547,7 +567,7 @@ class ControleRobo(Node):
 
                     # Inicia o PRIMEIRO passo da sequência
                     self.get_logger().info("Abaixando a garra...")
-                    self.controlar_garra([0.1, -0.5, 0.5])  # 1. Abaixa a garra (aberta)
+                      # 1. Abaixa a garra (aberta)
                     self.sub_state_garra = "abaixando"
                     
                     # Cria o PRIMEIRO timer para a duração do primeiro movimento
@@ -555,46 +575,38 @@ class ControleRobo(Node):
                     self.timer_garra = self.create_timer(2.0, self._callback_timer_garra) 
 
             case "Planejar_Retorno":
-                self.get_logger().info("Planejando caminho de volta para a base.")
-                # O goal agora é a posição inicial
-                start = self.world_to_grid(self.robot_x, self.robot_y)
-                goal = self.world_to_grid(self.robot_init_x, self.robot_init_y)
-                
-                inflated_grid = self.inflate_map(self.grid_map, 3)
-                self.caminho_a_estrela = self.a_star(inflated_grid, start, goal)
-
+                self.get_logger().info("Preparando rota de retorno invertendo o caminho de ida.")
                 if self.caminho_a_estrela:
+                    caminho_de_volta = list(reversed(self.caminho_a_estrela))
+                    
+                    self.caminho_a_estrela = caminho_de_volta[4:]
+                    
                     self.index_alvo = 0
                     self.state = "Retornar_Para_Base"
-                else:
-                    self.get_logger().error("Não foi possível encontrar caminho de volta! Tentando girar.")
-                    self.state = "Giro" # Tenta sair de uma possível posição presa
+                    self.get_logger().info("Retorno iniciado. Seguindo rota invertida.")
 
             case "Retornar_Para_Base":
-                # Lógica similar a "Seguir_Caminho"
-                if self.obstaculo_a_frente:
-                    self.get_logger().warn("Obstáculo no caminho de volta! Recalculando...")
-                    self.state = "Planejar_Retorno"
-                elif self.index_alvo >= len(self.caminho_a_estrela):
+                if self.index_alvo >= len(self.caminho_a_estrela):
                     self.get_logger().info("Chegou à base! Iniciando depósito.")
                     self.state = "Depositar_Bandeira"
                 else:
-                    # Sua lógica de seguir caminho (pode ser uma função separada para não repetir código)
                     grid_x, grid_y = self.caminho_a_estrela[self.index_alvo]
                     target_x, target_y = self.grid_to_world(grid_x, grid_y)
+                    
                     dx = target_x - self.robot_x
                     dy = target_y - self.robot_y
                     dist = np.hypot(dx, dy)
-                    angulo_alvo = np.arctan2(dy, dx)
-                    erro_ang = angulo_alvo - self.robot_yaw
-                    erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
-
-                    if dist <= 0.08:
+                    
+                    if dist <= 0.15: # Usando um limiar um pouco maior para o retorno
                         self.index_alvo += 1
                     else:
-                        twist.linear.x = 0.4
+                        angulo_alvo = np.arctan2(dy, dx)
+                        erro_ang = angulo_alvo - self.robot_yaw
+                        erro_ang = np.arctan2(np.sin(erro_ang), np.cos(erro_ang))
+                        
+                        twist.linear.x = 0.25 # Velocidade de retorno
                         twist.angular.z = 0.7 * erro_ang
-
+                        
             case "Depositar_Bandeira":
                 # Para o robô
                 twist.linear.x = 0.0
@@ -653,7 +665,7 @@ class ControleRobo(Node):
 
         caminho = self.a_star(inflated_grid_for_astar, start, goal)
         if not caminho == None:
-            return [x for i,x in enumerate(caminho) if i%3 == 0][2:] #ignora os primeiros pixels para não entrar em loop de recalcular sem se mover
+            return [x for i,x in enumerate(caminho) if i%4 == 0][2:] #ignora os primeiros pixels para não entrar em loop de recalcular sem se mover
         else:
             return None
 
