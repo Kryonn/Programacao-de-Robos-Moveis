@@ -3,7 +3,7 @@
 **Disciplina SSC0712**  
 Oferecida para os cursos de Engenharia de Computação e áreas afins na **USP São Carlos**
 
-Este repositório contém o Trabalho 1 da disciplina *Programação de Robôs Móveis*, cujo objetivo é desenvolver soluções em robótica móvel utilizando **ROS 2 Humble** e o simulador **Gazebo Fortress**. Nosso robô utiliza sensores como lidar e câmera para identificar uma bandeira, mapear o ambiente em um grid e navegar até ela.
+Este repositório contém o Trabalho 2 da disciplina *Programação de Robôs Móveis*, cujo objetivo é desenvolver soluções em robótica móvel utilizando **ROS 2 Humble** e o simulador **Gazebo Fortress**. Nosso robô utiliza sensores como lidar e câmera para identificar uma bandeira, mapear o ambiente em um grid e navegar até ela.
 
 ---
 
