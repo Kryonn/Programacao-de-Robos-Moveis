@@ -39,7 +39,7 @@ class ControleRobo(Node):
         # Espera o robô carregar
         # Levanta a garra no início do programa
         time.sleep(2)
-        self.controlar_garra([-np.pi, -0.5, 0.5]) 
+        # self.controlar_garra([-np.pi, -0.5, 0.5]) 
 
         # Timer para enviar comandos continuamente
         self.timer = self.create_timer(0.1, self.move_robot)
@@ -56,7 +56,7 @@ class ControleRobo(Node):
         self.dist_obstaculo  = 0.6          # Distancia mínima para obstáculo identificado
         self.angulo_necessario = 40         # Giro do robô
         self.giro_inicio = 0
-        self.frontal_scan_angle_deg = 15 
+        self.frontal_scan_angle_deg = 20 
         # Estados
         self.state = "Busca"                # "Busca", "Giro_inicio", "Giro", "Giro_fim", 
                                             # "Alinha_bandeira", "Andar_bandeira".
@@ -95,9 +95,16 @@ class ControleRobo(Node):
         self.invalid_distance_cooldown_s = 5.0 # Cooldown em segundos antes de tentar remapear/realinhar novamente
          
         # Limiar para área de blob
-        self.min_blob_area = 70  # Área mínima para considerar um blob de bandeira (já existente)
+        self.min_blob_area = 700  # Área mínima para considerar um blob de bandeira (já existente)
         self.max_blob_area = 16000 # Área máxima para considerar bandeira "muito próxima" - AJUSTAR ESSE VALOR SE NECESSÁRIO
+        
+        self.afasta_inicio = None
 
+        self.tentativas_desvio = 0      # Conta tentativas consecutivas de desvio
+        self.max_tentativas_quina = 3   # Após N tentativas, considera que está em quina/preso
+        self.time_last_desvio = None    # Para evitar desvios em sequência muito rápidos
+        self.timeout_desvio = 1.0       # Segundos mínimos entre desvios consecutivos
+        self.estado_antes_desvio = None
          
     def controlar_garra(self, posicoes, duracao_ns=2e9):
         """
@@ -130,26 +137,32 @@ class ControleRobo(Node):
         # Para checar obstáculo à frente:
         angle_deg_cada_lado = self.frontal_scan_angle_deg
         indices_frente = list(range(360 - angle_deg_cada_lado, 360)) + list(range(0, angle_deg_cada_lado + 1))
+        metade = len(indices_frente) // 2
+        indices_esq = indices_frente[:metade]
+        indices_dir = indices_frente[metade:]
+        
+        leituras_esq = [msg.ranges[i] for i in indices_esq if not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra]
+        leituras_dir = [msg.ranges[i] for i in indices_dir if not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra]
+
+        media_esq = np.mean(leituras_esq) if leituras_esq else float('inf')
+        media_dir = np.mean(leituras_dir) if leituras_dir else float('inf')
+        min_esq = min(leituras_esq) if leituras_esq else float('inf')
+        min_dir = min(leituras_dir) if leituras_dir else float('inf')
        
-        leituras_validas = [
-            (msg.ranges[i], i) for i in indices_frente 
-            if not np.isnan(msg.ranges[i]) and msg.ranges[i] > self.dist_garra
-        ]
-
-        if leituras_validas:
-            # Encontra a leitura com a menor distância dentro do cone
-            menor_distancia, indice_original = min(leituras_validas, key=lambda item: item[0])
-
-            if menor_distancia < self.dist_obstaculo:
-                self.obstaculo_a_frente = True
-                
-                self.dir = "Direita" if 0 <= indice_original <= angle_deg_cada_lado else "Esquerda"
-                
-                self.get_logger().info('Obstáculo detectado a {:.2f}m à frente'.format(menor_distancia) + f', na {self.dir}')
-            else:
-                self.obstaculo_a_frente = False
+        if min(min_esq, min_dir) < self.dist_obstaculo:
+            agora = time.time()
+            if self.time_last_desvio is None or (agora - self.time_last_desvio > self.timeout_desvio):
+                self.tentativas_desvio += 1
+                self.time_last_desvio = agora
+            self.dir = "Direita" if media_dir > media_esq else "Esquerda"
+            self.obstaculo_a_frente = True
+            self.get_logger().info(
+                f"Obstáculo à frente. Média Esq: {media_esq:.2f}, Média Dir: {media_dir:.2f}. Virando para {self.dir}. Tentativas: {self.tentativas_desvio}"
+            )
         else:
             self.obstaculo_a_frente = False
+            self.tentativas_desvio = 0  # Caminho livre, zera o contador
+            self.time_last_desvio = None
 
 
         #  mapeando obstáculos no grid
@@ -216,132 +229,35 @@ class ControleRobo(Node):
 
 
     def odom_callback(self, msg: Odometry):
-        # Mensagens de Odometria das rodas!
         pass
 
     def camera_callback(self, msg: Image):
         if self.simular_bandeira:
             self.simular_bandeira_detectada()
             return
-        # Converte mensagem ROS para imagem OpenCV (BGR)
+
         frame = self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        # Extraindo os valores relacionados ao tamanho da imagem gerada
         height, width, _ = frame.shape
+        target_color = np.array([227, 73, 0])
 
-        # Define a cor-alvo em BGR
-        target_color = np.array([227, 73, 0])  # BGR da bandeira
-
-        # Cria máscara para cor exata
         mask = cv2.inRange(frame, target_color, target_color)
-
-        # Mostra a máscara em uma janela para debug
         cv2.imshow('Mascara de Blobs #004239', mask)
         cv2.waitKey(1)
 
-        # Detecta contornos (blobs)
         contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # Atualizando a flag
         self.bandeira_identificada = False
 
-        # Verifica se a bandeira foi identificada
         if contours and not self.chegou_bandeira:
-            # self.get_logger().info(f'{len(contours)} blob(s) encontrados com cor #004239:')
-            for i, cnt in enumerate(contours):
-                area = cv2.contourArea(cnt)
-                area = cv2.contourArea(cnt)
-                if area < self.min_blob_area:
-                    continue # ignora blobs muito pequenos
-
-                # --- NOVA LÓGICA AQUI ---
-                if area > self.max_blob_area:
-                    M = cv2.moments(cnt)
-                    if M['m00'] != 0:
-                        cx = int(M['m10'] / M['m00'])
-                        cy = int(M['m01'] / M['m00'])
-                        self.error = cx - width / 2 # Calcula o erro para alinhamento
-                        self.bandeira_identificada = True
-
-                        self.get_logger().info(f'Bandeira MUITO PRÓXIMA (área: {area}). Alinhando e marcando à frente.')
-                        
-                        # Marca a bandeira como "logo à frente" do robô
-                        # Podemos usar uma distância fixa pequena, como 0.5m ou 1.0m, dependendo do robô e ambiente
-                        # Esta é uma estimativa, pois o LIDAR pode ter leituras inválidas de perto.
-                        distancia_fixa_frente = 0.5 # Ex: 0.5 metros à frente
-                        bandeira_x_proxima = self.robot_x + distancia_fixa_frente * np.cos(self.robot_yaw)
-                        bandeira_y_proxima = self.robot_y + distancia_fixa_frente * np.sin(self.robot_yaw)
-                        
-                        grid_x_proxima, grid_y_proxima = self.world_to_grid(bandeira_x_proxima, bandeira_y_proxima)
-
-                        if self.is_in_map(grid_x_proxima, grid_y_proxima):
-                            self.bandeira_x = grid_x_proxima
-                            self.bandeira_y = grid_y_proxima
-                            self.grid_map[self.bandeira_y, self.bandeira_x] = 0.75 # Marca bandeira no grid
-                            self.bandeira_mapeada = True
-                            self.state = "Capturar_Bandeira" # Planeja o caminho para a posição "próxima"
-                        return
-                M = cv2.moments(cnt)
+            # Pega o maior contorno válido (caso tenha mais de um)
+            cnt_maior = max(contours, key=cv2.contourArea)
+            area = cv2.contourArea(cnt_maior)
+            if area >= self.min_blob_area:
+                M = cv2.moments(cnt_maior)
                 if M['m00'] != 0:
-                    cx = int(M['m10'] / M['m00'])       # Posição horizontal da bandeira
-                    cy = int(M['m01'] / M['m00'])       # Posição vertical da bandeira
-                    # self.get_logger().info(f'  Blob {i+1}: posição (x={cx}, y={cy})')
-                    self.error = cx - width / 2         # Cálculo do erro do giro
-                    self.bandeira_identificada = True   # Atualizando a flag
+                    cx = int(M['m10'] / M['m00'])
+                    self.error = cx - width / 2
+                    self.bandeira_identificada = True
 
-                    # Quando a bandeira estiver centralizada
-                    if abs(self.error) < 5 and not self.bandeira_mapeada:  # Limiar ajustável (em pixels)
-                        if self.ultima_scan is not None:
-                            # Pega a distância à frente (ângulo 0°)
-                            num_ranges = len(self.ultima_scan.ranges)
-                            # Define um pequeno intervalo ao redor do centro
-                            centro = num_ranges // 2
-                            offset = 2  # quantos índices para esquerda/direita considerar
-                            indices = range(centro - offset, centro + offset + 1)
-
-                            # Coleta distâncias válidas
-                            distancias_validas = [
-                                self.ultima_scan.ranges[i]
-                                for i in indices
-                                if not np.isnan(self.ultima_scan.ranges[i]) and self.ultima_scan.ranges[i] != float('inf')
-                            ]
-
-                            current_time_ns = self.get_clock().now().nanoseconds
-                            # Verifica o cooldown antes de tentar mapear
-                            if (current_time_ns / 1e9 - self.last_invalid_distance_time) > self.invalid_distance_cooldown_s:
-
-                                # Usa a menor distância válida (mais próxima da haste)
-                                if distancias_validas:
-                                    distancia = min(distancias_validas)
-
-                                    # Calcula a posição global da bandeira
-                                    bandeira_x = self.robot_x + distancia * np.cos(self.robot_yaw)
-                                    bandeira_y = self.robot_y + distancia * np.sin(self.robot_yaw)
-
-                                    # Converte para grid
-                                    grid_x, grid_y = self.world_to_grid(bandeira_x, bandeira_y)
-
-                                    if self.is_in_map(grid_x, grid_y):
-                                        if len(self.bandeira_posicoes) < 4:
-                                            self.bandeira_posicoes.append((grid_x, grid_y))
-
-                                        # Se já tiver posições suficientes, calcula a média
-                                        if len(self.bandeira_posicoes) == 4:
-                                            media_x = int(sum(pos[0] for pos in self.bandeira_posicoes) / 4)
-                                            media_y = int(sum(pos[1] for pos in self.bandeira_posicoes) / 4)
-
-                                            # Marca no grid a posição média
-                                            if self.is_in_map(media_x, media_y):
-                                                self.grid_map[media_y, media_x] = 0.75  # Marca bandeira na posição média
-                                                self.show_grid()
-                                                # self.get_logger().info(f'Bandeira mapeada na média ({media_x}, {media_y})')
-                                                self.bandeira_x = media_x
-                                                self.bandeira_y = media_y
-                                                self.state = "Planejar_Caminho"
-                                else:
-                                    self.get_logger().warn('Distância LIDAR inválida para bandeira detectada.')
-                                    self.last_invalid_distance_time = current_time_ns / 1e9 # Atualiza o tempo do cooldown
-                                    if self.state == "Alinha_bandeira":
-                                        self.state = "Busca"
 
     def simular_bandeira_detectada(self):
         """
@@ -395,164 +311,175 @@ class ControleRobo(Node):
 
     def move_robot(self):
         twist = Twist()
-        self.get_logger().info(f'{self.state}') # imprime o estado atual do robô
+        self.get_logger().info(f'{self.state}')
         
-        # self.contador += 1
-
         # Transição dos estados
         match self.state:
-            case "Alinha_bandeira_e_Mapeia":
+            case "Alinha_bandeira":
                 twist.linear.x = 0.0
                 twist.angular.z = -self.kp * self.error
 
                 if not self.bandeira_identificada:
-                    self.get_logger().warn("Bandeira perdida durante reajuste. Voltando para Seguir_Caminho.")
-                    self.state = "Seguir_Caminho"
-                else:
-                    if abs(self.error) < 5:
-                        current_time_ns = self.get_clock().now().nanoseconds
-                        # Verifica o cooldown antes de tentar remapear
-                        if (current_time_ns / 1e9 - self.last_invalid_distance_time) > self.invalid_distance_cooldown_s:
-                            if self.ultima_scan is not None:
-                                num_ranges = len(self.ultima_scan.ranges)
-                                centro = num_ranges // 2
-                                offset = 5
-                                indices = range(centro - offset, centro + offset + 1)
-                                distancias_validas = [
-                                    self.ultima_scan.ranges[i]
-                                    for i in indices
-                                    if not np.isnan(self.ultima_scan.ranges[i]) and self.ultima_scan.ranges[i] != float('inf')
-                                ]
+                    self.state = "Busca"
+                elif abs(self.error) < 5:
+                    self.state = "Mapeia_bandeira"
 
-                                if distancias_validas:
-                                    distancia_nova = min(distancias_validas)
-                                    bandeira_x_nova = self.robot_x + distancia_nova * np.cos(self.robot_yaw)
-                                    bandeira_y_nova = self.robot_y + distancia_nova * np.sin(self.robot_yaw)
-                                    
-                                    grid_x_nova, grid_y_nova = self.world_to_grid(bandeira_x_nova, bandeira_y_nova)
+            case "Mapeia_bandeira":
+                twist.linear.x = 0.0
+                twist.angular.z = 0.0 
+                print(f'{self.bandeira_identificada,abs(self.error) < 5 , self.ultima_scan is not None}')
 
-                                    if (abs(grid_x_nova - self.bandeira_x) > 2 or abs(grid_y_nova - self.bandeira_y) > 2):
-                                        self.get_logger().info(f"Bandeira remapeada para ({grid_x_nova}, {grid_y_nova}). Pos. anterior: ({self.bandeira_x}, {self.bandeira_y}). Recalculando caminho.")
-                                        if self.is_in_map(grid_x_nova, grid_y_nova):
-                                            self.bandeira_x = grid_x_nova
-                                            self.bandeira_y = grid_y_nova
-                                            self.grid_map[self.bandeira_y, self.bandeira_x] = 0.75
-                                            self.flag_recalcular = True
-                                            self.state = "Planejar_Caminho"
-                                        else:
-                                            self.get_logger().info("Bandeira remapeada para fora do escopo. Continuando Seguir_Caminho.")
-                                            self.state = "Seguir_Caminho"
-                                    else:
-                                        self.get_logger().info("Bandeira centralizada e posição confirmada. Continuando Seguir_Caminho.")
-                                        self.state = "Seguir_Caminho"
+                if self.bandeira_identificada and abs(self.error) < 5 and self.ultima_scan is not None:
+                    num_ranges = len(self.ultima_scan.ranges)
+                    centro = num_ranges // 2
+                    offset = 2
+                    indices = range(centro - offset, centro + offset + 1)
+                    distancias_validas = [
+                        self.ultima_scan.ranges[i]
+                        for i in indices
+                        if not np.isnan(self.ultima_scan.ranges[i]) and self.ultima_scan.ranges[i] != float('inf')
+                    ]
+                    print("Setor central LIDAR:", [self.ultima_scan.ranges[i] for i in indices])
+                    if distancias_validas:
+                        distancia = min(distancias_validas)
+                        bandeira_x = self.robot_x + distancia * np.cos(self.robot_yaw)
+                        bandeira_y = self.robot_y + distancia * np.sin(self.robot_yaw)
+                        grid_x, grid_y = self.world_to_grid(bandeira_x, bandeira_y)
+                        self.get_logger().info(f'entrei')
+
+                        if self.is_in_map(grid_x, grid_y):
+                            self.bandeira_posicoes.append((grid_x, grid_y))
+                            self.get_logger().info(f'entrei')
+
+
+                    if len(self.bandeira_posicoes) > 0: 
+                        self.bandeira_x, self.bandeira_y = self.bandeira_posicoes[-1]
+                        self.grid_map[self.bandeira_y, self.bandeira_x] = 0.75
+                        self.bandeira_mapeada = True
+                        self.bandeira_posicoes.clear()
+                        self.state = "Validar_Posicao_Bandeira"
+                elif not self.bandeira_identificada:
+                    self.state = "Busca" 
+          
+            case "Validar_Posicao_Bandeira":
+                current_time_ns = self.get_clock().now().nanoseconds
+                if (current_time_ns / 1e9 - self.last_invalid_distance_time) > self.invalid_distance_cooldown_s:
+                    if self.ultima_scan is not None:
+                        num_ranges = len(self.ultima_scan.ranges)
+                        centro = num_ranges // 2
+                        offset = 5
+                        indices = range(centro - offset, centro + offset + 1)
+                        distancias_validas = [
+                            self.ultima_scan.ranges[i]
+                            for i in indices
+                            if not np.isnan(self.ultima_scan.ranges[i]) and self.ultima_scan.ranges[i] != float('inf')
+                        ]
+                        if distancias_validas:
+                            distancia_nova = min(distancias_validas)
+                            bandeira_x_nova = self.robot_x + distancia_nova * np.cos(self.robot_yaw)
+                            bandeira_y_nova = self.robot_y + distancia_nova * np.sin(self.robot_yaw)
+                            grid_x_nova, grid_y_nova = self.world_to_grid(bandeira_x_nova, bandeira_y_nova)
+
+                            if (abs(grid_x_nova - self.bandeira_x) > 2 or abs(grid_y_nova - self.bandeira_y) > 2):
+                                self.get_logger().info(f"Bandeira remapeada para ({grid_x_nova}, {grid_y_nova}). Pos. anterior: ({self.bandeira_x}, {self.bandeira_y}). Recalculando caminho.")
+                                if self.is_in_map(grid_x_nova, grid_y_nova):
+                                    self.bandeira_x = grid_x_nova
+                                    self.bandeira_y = grid_y_nova
+                                    self.grid_map[self.bandeira_y, self.bandeira_x] = 0.75
+                                    self.flag_recalcular = True
+                                    self.state = "Planejar_Caminho"
                                 else:
-                                    self.get_logger().warn('Distância LIDAR inválida durante remapeamento. Ativando cooldown. Voltando para Seguir_Caminho.')
-                                    self.last_invalid_distance_time = current_time_ns / 1e9 # Atualiza o tempo do cooldown
-                                    self.state = "Seguir_Caminho" # Volta para o caminho para tentar de novo mais tarde
+                                    self.get_logger().info("Bandeira remapeada para fora do escopo. Continuando Seguir_Caminho.")
+                                    self.state = "Seguir_Caminho"
                             else:
-                                self.get_logger().warn('Scan não disponível para remapeamento. Ativando cooldown. Voltando para Seguir_Caminho.')
-                                self.last_invalid_distance_time = current_time_ns / 1e9 # Atualiza o tempo do cooldown
+                                self.get_logger().info("Bandeira centralizada e posição confirmada. Continuando Seguir_Caminho.")
                                 self.state = "Seguir_Caminho"
                         else:
-                            self.get_logger().info("Bandeira centralizada, mas em cooldown de distância inválida para remapeamento.")
-                            # Não faz nada, espera o cooldown
-                            self.state = "Seguir_Caminho" # O robô pode voltar a seguir o caminho enquanto espera o cooldown
-
+                            self.get_logger().warn('Distância LIDAR inválida durante remapeamento. Voltando para Seguir_Caminho.')
+                            self.last_invalid_distance_time = current_time_ns / 1e9
+                            self.state = "Seguir_Caminho"
+                    else:
+                        self.get_logger().warn('Scan não disponível para validação. Voltando para Seguir_Caminho.')
+                        self.state = "Seguir_Caminho"
+                else:
+                    self.get_logger().info("Aguardando cooldown para nova validação da bandeira.")
+                    self.state = "Seguir_Caminho"
 
             case "Afasta":
-                # Tempo inicial
-                inicio = self.get_clock().now()
+                # Se ainda não iniciou o recuo, marca o instante de início
+                if self.afasta_inicio is None:
+                    self.afasta_inicio = self.get_clock().now()
+                    if self.estado_antes_desvio is None:
+                        # Salva o estado anterior ao desvio
+                        self.estado_antes_desvio = self.state_anterior if hasattr(self, "state_anterior") else "Busca"  
 
-                # Envia o comando pelo tempo em 'duracao'
-                duracao = 2e9   # n segundos = n * 10^9 ns
+                
+                duracao = 1.0  # segundos de recuo
 
-                while (self.get_clock().now() - inicio).nanoseconds < duracao:  
+                # Calcula o tempo decorrido
+                tempo_decorrido = (self.get_clock().now() - self.afasta_inicio).nanoseconds / 1e9
+
+                if tempo_decorrido < duracao:
                     twist.linear.x = -0.3
-                    self.cmd_vel_pub.publish(twist)
+                    twist.angular.z = 0.0
+                else: 
+                    self.afasta_inicio = None
+                    # Aumenta o ângulo se muitas tentativas (pode ser 90° normalmente, ou 135°/180° para sair de quina)
+                    if self.tentativas_desvio >= self.max_tentativas_quina:
+                        self.angulo_necessario = 150   # Tenta um giro maior para escapar da quina
+                    else:
+                        self.angulo_necessario = 90
 
-                self.giro_inicio = time.time()
-                self.state = "Giro"
+                    self.giro_inicio = time.time()
+                    self.state = "Giro"
 
             # Giro: faz o robô girar para o lado que foi definido
             case "Giro":
-                twist.linear.x = 0.15
-
-                if self.dir == "Direita":
-                    twist.angular.z = 0.35
-                else:
-                    twist.angular.z = -0.35
-
+                twist.linear.x = 0.0
+                twist.angular.z = 0.45 if self.dir == "Direita" else -0.45
+               
                 tempo_decorrido = time.time() - self.giro_inicio
-                tempo_necessario =  np.radians(self.angulo_necessario)/ abs(twist.angular.z)
+                tempo_necessario = np.radians(self.angulo_necessario) / abs(twist.angular.z)
 
-
-                # Terminou o primeiro giro
                 if tempo_decorrido >= tempo_necessario:
                     self.get_logger().info("Fim do Giro")
-
                     twist.angular.z = 0.0
 
-                    if not self.obstaculo_a_frente:
-                        # anda para frente
-                        duracao = 5e9   # n segundos = n * 10^9 ns
+                    self.avanco_curto_inicio = time.time()
+                    self.state = "Avanco_Curto"
+                    
+            case "Avanco_Curto":
+                twist.linear.x = 0.25
+                twist.angular.z = 0.0
+                duracao_avanco = 0.6
 
-                        inicio = self.get_clock().now()
-                        while (self.get_clock().now() - inicio).nanoseconds < duracao:  
-                            twist.linear.x = 0.45
-                            self.cmd_vel_pub.publish(twist)
-                        
-                        duracao = 4e9   # n segundos = n * 10^9 ns
-
-                        # gira um pouco na direção inversa para 'endireitar' o robo
-                        inicio = self.get_clock().now()
-                        twist.linear.x = 0.0
-                        while (self.get_clock().now() - inicio).nanoseconds < duracao:  
-                            if self.dir == "Direita":
-                                twist.angular.z = -0.35
-                            else:
-                                twist.angular.z = 0.35
-                            self.cmd_vel_pub.publish(twist)
-
-                        # Se a bandeira já foi mapeada, segue o caminho
-                        if (self.bandeira_mapeada):
-                            self.flag_recalcular = True
-                            self.state = "Seguir_Caminho"
-                        # Senão, continua a busca
-                        else:
-                            self.state = "Busca"
+                if self.obstaculo_a_frente:
+                    self.get_logger().info("Obstáculo durante avanço curto, parando e buscando novo caminho.")
+                    self.tentativas_desvio = 0
+                    if self.bandeira_mapeada:
+                        self.flag_recalcular = True
+                    if self.estado_antes_desvio:
+                        self.state = self.estado_antes_desvio
+                        self.estado_antes_desvio = None
                     else:
-                        # Se ainda há obstáculo, atualiza o tempo de inicio e continua no giro
-                        self.giro_inicio = time.time()
-                        self.state = "Giro"
-        
+                        self.state = "Busca"
+                elif time.time() - self.avanco_curto_inicio >= duracao_avanco:
+                    self.tentativas_desvio = 0 
+                    if self.estado_antes_desvio:
+                        self.state = self.estado_antes_desvio
+                        self.estado_antes_desvio = None
+                    else:
+                        self.state = "Busca"
             # Busca: anda para frente até encontrar um obstáculo ou a bandeira
             case "Busca":
-                # [DEBUG] espera um pouco para simular a bandeira
-                # if self.contador >= 10:
-                #     self.simular_bandeira = True
+                twist.linear.x = 0.50
+                current_time_ns = self.get_clock().now().nanoseconds
 
-                twist.linear.x = 0.30
                 if self.obstaculo_a_frente:
                     self.state = "Afasta"
-
-                else:
-                    current_time_ns = self.get_clock().now().nanoseconds
-                    if self.bandeira_identificada and (current_time_ns / 1e9 - self.last_invalid_distance_time) > self.invalid_distance_cooldown_s:
-                        self.state = "Alinha_bandeira"
-
-            # Alinha_bandeira: gira em direção à bandeira
-            case "Alinha_bandeira":
-                if not self.bandeira_identificada:
-                    self.state = "Busca"
-                elif self.obstaculo_a_frente:
-                    self.state = "Afasta"
-                else:
-                    twist.linear.x = 0.0
-                    twist.angular.z = -self.kp * self.error
-                    # if abs(self.error) < 2:
-                    #     self.state = "Andar_bandeira"
-
-            # Andar_bandeira: anda até a bandeira
+                elif self.bandeira_identificada and (current_time_ns / 1e9 - self.last_invalid_distance_time) > self.invalid_distance_cooldown_s:
+                    self.state = "Alinha_bandeira"
+               
             case "Andar_bandeira":
                 twist.linear.x = 0.2
                 if self.obstaculo_a_frente:
@@ -564,8 +491,6 @@ class ControleRobo(Node):
 
                 if not self.caminho_a_estrela == None:
                     self.get_logger().warn(f'Caminho: {self.caminho_a_estrela}') # imprime caminho
-                    # for a, b in self.caminho_a_estrela:
-                    #     self.grid_map[b, a] = 0.2
                     self.state = "Seguir_Caminho"
                     self.index_alvo = 0
                     self.bandeira_mapeada = True
@@ -576,6 +501,11 @@ class ControleRobo(Node):
                     self.state = "Busca"
 
             case "Seguir_Caminho":
+                if self.obstaculo_a_frente:
+                    self.get_logger().warn("Obstáculo detectado durante caminho planejado. Recalculando.")
+                    self.flag_recalcular = True
+                    self.state = "Afasta"
+                    return
                 if self.caminho_a_estrela == None:
                     self.state = "Planejar_Caminho"
                 elif self.index_alvo >= len(self.caminho_a_estrela) - 4 and not self.garra_abaixada:
@@ -775,7 +705,6 @@ class ControleRobo(Node):
 
         self.cmd_vel_pub.publish(twist)
         self.show_grid()
-        # self.get_logger().warn(f'{self.state}') # imprime o estado atual do robô
 
     def _callback_timer_garra(self):
         """
@@ -962,6 +891,3 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
-
-# pkill -f gazebo && pkill -f roslaunch && pkill -f rosmaster
